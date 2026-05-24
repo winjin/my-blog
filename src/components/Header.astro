@@ -1,0 +1,85 @@
+---
+import ThemeToggle from './ThemeToggle.astro';
+import Search from './Search.astro';
+import { SITE } from '../consts';
+---
+
+<header class="site-header">
+  <div class="container header-inner">
+    <a class="site-title" href="/">{SITE.title}</a>
+    <nav class="site-nav" aria-label="主导航">
+      <a href="/timeline">雁过留痕</a>
+      <a href="/archive">归档</a>
+      <a href="/about">关于</a>
+      <a href="/rss.xml" title="RSS 订阅">RSS</a>
+    </nav>
+    <div class="header-actions">
+      <Search />
+      <ThemeToggle />
+    </div>
+  </div>
+</header>
+
+<style>
+  .site-header {
+    position: sticky;
+    top: 0;
+    z-index: 10;
+    border-bottom: 1px solid var(--border);
+    background: color-mix(in srgb, var(--bg) 92%, transparent);
+    backdrop-filter: blur(10px);
+  }
+
+  .header-inner {
+    display: flex;
+    align-items: center;
+    gap: 1.5rem;
+    height: 4rem;
+  }
+
+  .site-title {
+    font-weight: 800;
+    font-size: 1.1rem;
+    color: var(--text);
+    text-decoration: none;
+    margin-right: auto;
+    letter-spacing: -0.01em;
+  }
+
+  .site-title:hover {
+    color: var(--accent);
+  }
+
+  .site-nav {
+    display: flex;
+    gap: 1.25rem;
+  }
+
+  .site-nav a {
+    color: var(--text-muted);
+    font-size: 0.9rem;
+    font-weight: 500;
+    text-decoration: none;
+    transition: color 0.15s;
+  }
+
+  .site-nav a:hover {
+    color: var(--text);
+  }
+
+  .header-actions {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+
+  @media (max-width: 640px) {
+    .header-inner {
+      gap: 1rem;
+    }
+
+    .site-nav {
+      gap: 0.75rem;
+    }
+  }
+</style>

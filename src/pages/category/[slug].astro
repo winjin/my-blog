@@ -1,0 +1,44 @@
+---
+import BaseLayout from '../../layouts/BaseLayout.astro';
+import { getCollection } from 'astro:content';
+import { CATEGORIES } from '../../consts';
+
+export async function getStaticPaths() {
+  return Object.keys(CATEGORIES).map((slug) => ({ params: { slug } }));
+}
+
+const { slug } = Astro.params;
+const category = slug as keyof typeof CATEGORIES;
+const categoryInfo = CATEGORIES[category];
+
+const posts = (await getCollection('posts'))
+  .filter((post) => !post.data.draft && post.data.category === category)
+  .sort((a, b) => b.data.date.getTime() - a.data.date.getTime());
+---
+
+<BaseLayout title={categoryInfo.label} description={categoryInfo.description}>
+  <header class="page-header">
+    <h1>{categoryInfo.label}</h1>
+    <p>{categoryInfo.description}</p>
+  </header>
+
+  <ul class="archive-list">
+    {
+      posts.map((post) => (
+        <li class="archive-item">
+          <time datetime={post.data.date.toISOString()}>
+            {post.data.date.toLocaleDateString('zh-CN')}
+          </time>
+          <a href={`/posts/${post.id}`}>{post.data.title}</a>
+          <span class="category-badge">{categoryInfo.label}</span>
+        </li>
+      ))
+    }
+  </ul>
+
+  {
+    posts.length === 0 && (
+      <p>该分类下暂无文章。</p>
+    )
+  }
+</BaseLayout>

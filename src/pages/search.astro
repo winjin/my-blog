@@ -1,0 +1,59 @@
+---
+import BaseLayout from '../layouts/BaseLayout.astro';
+---
+
+<BaseLayout title="搜索" description="搜索站内文章">
+  <header class="page-header">
+    <h1>全文搜索</h1>
+    <p>搜索文章正文内容。日常快速查找可点击右上角「搜索」或按 ⌘K / Ctrl+K 打开搜索面板。</p>
+  </header>
+
+  <div class="search-page-box">
+    <div id="search"></div>
+  </div>
+</BaseLayout>
+
+<link href="/pagefind/pagefind-ui.css" rel="stylesheet" />
+<script src="/pagefind/pagefind-ui.js" is:inline></script>
+<script is:inline>
+  document.addEventListener('DOMContentLoaded', () => {
+    if (typeof PagefindUI !== 'undefined') {
+      new PagefindUI({
+        element: '#search',
+        showImages: false,
+        resetStyles: false,
+      });
+      return;
+    }
+
+    const box = document.getElementById('search');
+    if (box) {
+      box.innerHTML = '<p class="search-unavailable">全文搜索索引尚未生成。请先运行 <code>npm run build</code>，再使用 <code>npm run preview</code> 预览。</p>';
+    }
+  });
+</script>
+
+<style>
+  .search-page-box {
+    max-width: 680px;
+    padding: 1.25rem;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    background: var(--bg-elevated);
+  }
+
+  :global(.pagefind-ui) {
+    --pagefind-ui-scale: 1;
+    --pagefind-ui-primary: var(--accent);
+    --pagefind-ui-text: var(--text);
+    --pagefind-ui-background: var(--bg-elevated);
+    --pagefind-ui-border: var(--border);
+    --pagefind-ui-tag: var(--code-bg);
+  }
+
+  :global(.search-unavailable) {
+    margin: 0;
+    color: var(--text-muted);
+    line-height: 1.7;
+  }
+</style>

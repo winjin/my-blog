@@ -1,0 +1,50 @@
+---
+import { SITE } from '../consts';
+
+const year = new Date().getFullYear();
+---
+
+<footer class="site-footer">
+  <div class="container footer-inner">
+    <p>© {year} {SITE.author} · {SITE.title}</p>
+    <p class="footer-links">
+      <a href="/rss.xml">RSS</a>
+      <a href="/about">关于</a>
+    </p>
+  </div>
+</footer>
+
+<style>
+  .site-footer {
+    margin-top: 5rem;
+    padding: 2.5rem 0;
+    border-top: 1px solid var(--border);
+    color: var(--text-muted);
+    font-size: 0.85rem;
+  }
+
+  .footer-inner {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    gap: 0.5rem 1rem;
+  }
+
+  .footer-inner p {
+    margin: 0;
+  }
+
+  .footer-links {
+    display: flex;
+    gap: 1.25rem;
+  }
+
+  .footer-links a {
+    color: var(--text-muted);
+    transition: color 0.15s;
+  }
+
+  .footer-links a:hover {
+    color: var(--accent);
+  }
+</style>

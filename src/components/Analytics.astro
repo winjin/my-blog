@@ -1,0 +1,13 @@
+---
+import { UMAMI } from '../consts';
+---
+
+{
+  UMAMI.enabled && (
+    <script
+      defer
+      src={UMAMI.src}
+      data-website-id={UMAMI.websiteId}
+    />
+  )
+}

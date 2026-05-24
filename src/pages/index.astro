@@ -1,0 +1,80 @@
+---
+import BaseLayout from '../layouts/BaseLayout.astro';
+import PostCard from '../components/PostCard.astro';
+import { getCollection } from 'astro:content';
+import { SITE, CATEGORIES, type Category } from '../consts';
+
+const allPosts = (await getCollection('posts'))
+  .filter((post) => !post.data.draft)
+  .sort((a, b) => b.data.date.getTime() - a.data.date.getTime());
+
+const featuredPost = allPosts[0];
+const remainingPosts = allPosts.slice(1);
+---
+
+<BaseLayout>
+  <section class="hero">
+    <h1>{SITE.title}</h1>
+    <p>{SITE.description}</p>
+
+    {featuredPost && (
+      <a class="featured-post" href={`/posts/${featuredPost.id}`}>
+        <div class="featured-post-cover">
+          {featuredPost.data.cover ? (
+            <img src={featuredPost.data.cover} alt={featuredPost.data.title} />
+          ) : (
+            <div class="post-card-cover-placeholder" data-category={featuredPost.data.category}></div>
+          )}
+        </div>
+        <div class="featured-post-body">
+          <span class="post-card-category" data-category={featuredPost.data.category}>
+            {CATEGORIES[featuredPost.data.category].label}
+          </span>
+          <h2>{featuredPost.data.title}</h2>
+          <p>{featuredPost.data.description}</p>
+          <div class="featured-post-footer">
+            <time datetime={featuredPost.data.date.toISOString()}>
+              {featuredPost.data.date.toLocaleDateString('zh-CN')}
+            </time>
+            <span>继续阅读 →</span>
+          </div>
+        </div>
+      </a>
+    )}
+  </section>
+
+  <div class="category-tabs" id="category-tabs">
+    <button class="category-tab active" data-filter="all">全部</button>
+    {Object.entries(CATEGORIES).map(([slug, { label }]) => (
+      <button class="category-tab" data-filter={slug}>{label}</button>
+    ))}
+  </div>
+
+  <div class="post-grid" id="post-grid">
+    {remainingPosts.map((post) => (
+      <div class="post-grid-item" data-category={post.data.category}>
+        <PostCard post={post} />
+      </div>
+    ))}
+  </div>
+</BaseLayout>
+
+<script>
+  const tabs = document.querySelectorAll<HTMLButtonElement>('.category-tab');
+  const items = document.querySelectorAll<HTMLElement>('.post-grid-item');
+
+  tabs.forEach((tab) => {
+    tab.addEventListener('click', () => {
+      tabs.forEach((t) => t.classList.remove('active'));
+      tab.classList.add('active');
+      const filter = tab.dataset.filter;
+      items.forEach((item) => {
+        if (filter === 'all' || item.dataset.category === filter) {
+          item.style.display = '';
+        } else {
+          item.style.display = 'none';
+        }
+      });
+    });
+  });
+</script>

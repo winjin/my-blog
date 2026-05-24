@@ -1,0 +1,30 @@
+---
+import type { CollectionEntry } from 'astro:content';
+import { CATEGORIES } from '../consts';
+
+interface Props {
+  post: CollectionEntry<'posts'>;
+}
+
+const { post } = Astro.props;
+const { title, description, category, date, cover } = post.data;
+const categoryInfo = CATEGORIES[category];
+---
+
+<a class="post-card" href={`/posts/${post.id}`}>
+  <div class="post-card-cover">
+    {cover ? (
+      <img src={cover} alt={title} loading="lazy" />
+    ) : (
+      <div class="post-card-cover-placeholder" data-category={category}></div>
+    )}
+  </div>
+  <div class="post-card-body">
+    <span class="post-card-category" data-category={category}>{categoryInfo.label}</span>
+    <h3>{title}</h3>
+    <p>{description}</p>
+    <div class="post-meta">
+      <time datetime={date.toISOString()}>{date.toLocaleDateString('zh-CN')}</time>
+    </div>
+  </div>
+</a>

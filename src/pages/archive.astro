@@ -1,0 +1,30 @@
+---
+import BaseLayout from '../layouts/BaseLayout.astro';
+import { getCollection } from 'astro:content';
+import { CATEGORIES } from '../consts';
+
+const posts = (await getCollection('posts'))
+  .filter((post) => !post.data.draft)
+  .sort((a, b) => b.data.date.getTime() - a.data.date.getTime());
+---
+
+<BaseLayout title="归档" description="全部文章归档">
+  <header class="page-header">
+    <h1>文章归档</h1>
+    <p>共 {posts.length} 篇文章</p>
+  </header>
+
+  <ul class="archive-list">
+    {
+      posts.map((post) => (
+        <li class="archive-item">
+          <time datetime={post.data.date.toISOString()}>
+            {post.data.date.toLocaleDateString('zh-CN')}
+          </time>
+          <a href={`/posts/${post.id}`}>{post.data.title}</a>
+          <span class="category-badge">{CATEGORIES[post.data.category].label}</span>
+        </li>
+      ))
+    }
+  </ul>
+</BaseLayout>

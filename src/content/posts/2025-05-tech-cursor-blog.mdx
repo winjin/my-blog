@@ -1,0 +1,40 @@
+---
+title: "用 Cursor 写博客：Markdown 工作流实践"
+description: "从编辑器选择到 git push 自动部署，搭建一套低摩擦的个人写作流程。"
+category: tech
+tags: [Cursor, Astro, Markdown, 工作流]
+date: 2025-05-22
+draft: false
+cover: "/images/my-cover.png"
+---
+
+作为一个经常在不同主题之间切换的写作者，我需要的不是功能最全的 CMS，而是**足够轻、足够稳**的内容工作流。
+
+## 为什么选择 Astro + Markdown
+
+1. **内容与展示分离**：文章就是仓库里的 `.mdx` 文件，天然有版本历史
+2. **构建速度快**：静态站点，访问体验好
+3. **扩展简单**：搜索、RSS、评论都可以按需接入
+
+## 我的写作流程
+
+```bash
+# 1. 在 src/content/posts/ 新建文章
+# 2. 本地预览
+npm run dev
+
+# 3. 确认无误后提交
+git add .
+git commit -m "add: 新文章标题"
+git push
+```
+
+推送后 Vercel 会自动构建并发布，整个过程不需要登录后台。
+
+## 几个实用技巧
+
+- 用 frontmatter 固定 `title`、`description`、`category`，方便分类和 SEO
+- 草稿阶段设 `draft: true`，不会被发布
+- 配图放在 `public/images/`，引用路径稳定
+
+如果你也在考虑做自己的网站，不要等「完美方案」。先写起来，再慢慢迭代。

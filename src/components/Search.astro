@@ -1,0 +1,52 @@
+<button id="search-open" type="button" class="search-trigger" aria-label="打开搜索" aria-haspopup="dialog">
+  <svg class="search-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+    <circle cx="11" cy="11" r="7" stroke="currentColor" stroke-width="2"></circle>
+    <path d="M20 20L16.5 16.5" stroke="currentColor" stroke-width="2" stroke-linecap="round"></path>
+  </svg>
+  <span class="search-label">搜索</span>
+  <kbd class="search-kbd">⌘K</kbd>
+</button>
+
+<style>
+  .search-trigger {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    height: 2.25rem;
+    padding: 0 0.65rem;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--bg-elevated);
+    color: var(--text-muted);
+    font-size: 0.85rem;
+    cursor: pointer;
+    transition: border-color 0.15s ease, color 0.15s ease;
+  }
+
+  .search-trigger:hover {
+    border-color: var(--accent);
+    color: var(--text);
+  }
+
+  .search-icon {
+    flex-shrink: 0;
+  }
+
+  .search-kbd {
+    display: none;
+    padding: 0.1rem 0.35rem;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    background: var(--bg);
+    font-family: inherit;
+    font-size: 0.72rem;
+    line-height: 1.2;
+    color: var(--text-muted);
+  }
+
+  @media (min-width: 768px) {
+    .search-kbd {
+      display: inline-block;
+    }
+  }
+</style>

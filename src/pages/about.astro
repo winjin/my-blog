@@ -1,0 +1,26 @@
+---
+import BaseLayout from '../layouts/BaseLayout.astro';
+import { SITE } from '../consts';
+---
+
+<BaseLayout title="关于" description={`关于 ${SITE.author}`}>
+  <header class="page-header">
+    <h1>关于我</h1>
+  </header>
+
+  <div class="about-content prose">
+    <p>
+      你好，我是 {SITE.author}。这里是「{SITE.title}」—— 我用来记录思考、观察和实验的个人空间。
+    </p>
+    <p>你会在这里看到三类内容：</p>
+    <ul>
+      <li><strong>生活记录</strong>：旅行、读书、日常里的片段与感悟</li>
+      <li><strong>科技资讯</strong>：工具、编程、AI 与数字生活的笔记</li>
+      <li><strong>经济观察</strong>：宏观趋势、行业变化与个人理解</li>
+    </ul>
+    <p>
+      写作对我来说不是输出结论，而是整理思路的过程。欢迎通过评论交流，或订阅
+      <a href="/rss.xml">RSS</a> 跟踪更新。
+    </p>
+  </div>
+</BaseLayout>

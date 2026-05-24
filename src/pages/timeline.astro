@@ -1,0 +1,379 @@
+---
+import BaseLayout from '../layouts/BaseLayout.astro';
+import timelineData from '../data/timeline.json';
+
+const events = timelineData.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+---
+
+<BaseLayout title="雁过留痕" description="旅行足迹，用照片记录走过的路。">
+  <section class="timeline-hero">
+    <h1>雁过留痕</h1>
+    <p>旅行足迹，用照片记录走过的路。</p>
+  </section>
+
+  <div class="timeline" id="timeline">
+    <svg class="timeline-wave" id="timeline-wave" xmlns="http://www.w3.org/2000/svg"></svg>
+    {events.map((event, index) => (
+      <div class={`timeline-node ${index % 2 === 0 ? 'left' : 'right'}`}>
+        <div class="timeline-dot"></div>
+        <div class="timeline-card">
+          <div class="timeline-card-header">
+            <time datetime={event.date}>
+              {new Date(event.date).toLocaleDateString('zh-CN', { year: 'numeric', month: 'long', day: 'numeric' })}
+            </time>
+            <span class="timeline-location">{event.location}</span>
+          </div>
+          <p class="timeline-desc">{event.description}</p>
+          <div class="timeline-photos" data-total={event.photos.length}>
+            {event.photos.slice(0, 3).map((photo, i) => (
+              <div class="timeline-photo-item">
+                <img src={photo} alt={`${event.location} ${i + 1}`} loading="lazy" />
+              </div>
+            ))}
+            {event.photos.length > 3 && (
+              <button class="timeline-more-btn" data-photos={JSON.stringify(event.photos.slice(3))} data-location={event.location}>
+                查看更多 (+{event.photos.length - 3})
+              </button>
+            )}
+          </div>
+          <div class="timeline-photos-extra" style="display:none;"></div>
+        </div>
+      </div>
+    ))}
+  </div>
+
+  <!-- Lightbox -->
+  <div class="lightbox" id="lightbox">
+    <button class="lightbox-close" aria-label="关闭">&times;</button>
+    <img class="lightbox-img" src="" alt="" />
+  </div>
+</BaseLayout>
+
+<script>
+  function drawWave() {
+    const timeline = document.getElementById('timeline')!;
+    const svg = document.getElementById('timeline-wave') as unknown as SVGSVGElement;
+    const dots = timeline.querySelectorAll<HTMLElement>('.timeline-dot');
+    if (dots.length === 0) return;
+
+    const timelineRect = timeline.getBoundingClientRect();
+    const timelineTop = timeline.offsetTop;
+    const centerX = timeline.offsetWidth / 2;
+    const amplitude = 40;
+
+    // Gather dot Y positions relative to the timeline container
+    const points: { x: number; y: number }[] = [];
+    dots.forEach((dot, i) => {
+      const dotRect = dot.getBoundingClientRect();
+      const y = dotRect.top - timelineRect.top + dot.offsetHeight / 2;
+      // Alternate x: left nodes curve right at peak, right nodes curve left
+      const x = i % 2 === 0 ? centerX - amplitude : centerX + amplitude;
+      points.push({ x, y });
+    });
+
+    // Build a smooth curve path through all points
+    // Start from top center, curve to first point, then through each point
+    const svgWidth = timeline.offsetWidth;
+    const svgHeight = timeline.offsetHeight;
+    svg.setAttribute('viewBox', `0 0 ${svgWidth} ${svgHeight}`);
+    svg.setAttribute('width', `${svgWidth}`);
+    svg.setAttribute('height', `${svgHeight}`);
+
+    let d = `M ${centerX} 0`;
+
+    for (let i = 0; i < points.length; i++) {
+      const p = points[i];
+      const prevY = i === 0 ? 0 : points[i - 1].y;
+      const cpY = (prevY + p.y) / 2;
+      const prevX = i === 0 ? centerX : points[i - 1].x;
+      // Quadratic curve: control point at midpoint Y, with x of previous point
+      d += ` Q ${prevX} ${cpY}, ${p.x} ${p.y}`;
+    }
+
+    // Continue to bottom
+    const lastPoint = points[points.length - 1];
+    d += ` Q ${lastPoint.x} ${(lastPoint.y + svgHeight) / 2}, ${centerX} ${svgHeight}`;
+
+    svg.innerHTML = `<path d="${d}" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/>`;
+  }
+
+  // Show more photos
+  document.querySelectorAll<HTMLButtonElement>('.timeline-more-btn').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const photos: string[] = JSON.parse(btn.dataset.photos || '[]');
+      const location = btn.dataset.location || '';
+      const container = btn.closest('.timeline-card')!.querySelector('.timeline-photos-extra') as HTMLElement;
+      container.innerHTML = photos
+        .map((src, i) => `<div class="timeline-photo-item"><img src="${src}" alt="${location} ${i + 4}" loading="lazy" /></div>`)
+        .join('');
+      container.style.display = 'grid';
+      btn.remove();
+      drawWave();
+    });
+  });
+
+  // Lightbox
+  const lightbox = document.getElementById('lightbox')!;
+  const lightboxImg = lightbox.querySelector('.lightbox-img') as HTMLImageElement;
+
+  document.addEventListener('click', (e) => {
+    const target = e.target as HTMLElement;
+    if (target.closest('.timeline-photo-item img')) {
+      const img = target.closest('img') as HTMLImageElement;
+      lightboxImg.src = img.src;
+      lightboxImg.alt = img.alt;
+      lightbox.classList.add('active');
+    }
+  });
+
+  lightbox.addEventListener('click', (e) => {
+    if (!(e.target as HTMLElement).closest('.lightbox-img')) {
+      lightbox.classList.remove('active');
+    }
+  });
+
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') lightbox.classList.remove('active');
+  });
+
+  // Draw wave on load and resize
+  drawWave();
+  window.addEventListener('resize', drawWave);
+  // Redraw after images load (they affect layout)
+  window.addEventListener('load', drawWave);
+</script>
+
+<style>
+  .timeline-hero {
+    padding: 3rem 0 1.5rem;
+    text-align: center;
+  }
+
+  .timeline-hero h1 {
+    margin: 0 0 0.5rem;
+    font-size: 2.5rem;
+    font-weight: 800;
+    letter-spacing: -0.02em;
+  }
+
+  .timeline-hero p {
+    margin: 0;
+    color: var(--text-muted);
+    font-size: 1.05rem;
+  }
+
+  /* Timeline Container */
+  .timeline {
+    position: relative;
+    max-width: 900px;
+    margin: 2rem auto 0;
+    padding: 2rem 0;
+  }
+
+  /* Wavy SVG Line */
+  .timeline-wave {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+    color: var(--accent);
+    opacity: 0.45;
+    z-index: 0;
+  }
+
+  /* Node */
+  .timeline-node {
+    position: relative;
+    width: 45%;
+    margin-bottom: 3rem;
+    z-index: 1;
+  }
+
+  .timeline-node.left {
+    margin-right: auto;
+    padding-right: 2.5rem;
+  }
+
+  .timeline-node.right {
+    margin-left: auto;
+    padding-left: 2.5rem;
+  }
+
+  /* Dot */
+  .timeline-dot {
+    position: absolute;
+    top: 1.5rem;
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background: var(--accent);
+    border: 3px solid var(--bg);
+    box-shadow: 0 0 0 2px var(--accent);
+    z-index: 2;
+  }
+
+  .timeline-node.left .timeline-dot {
+    right: -7px;
+  }
+
+  .timeline-node.right .timeline-dot {
+    left: -7px;
+  }
+
+  /* Card */
+  .timeline-card {
+    background: var(--bg-elevated);
+    border-radius: 12px;
+    padding: 1.5rem;
+    box-shadow: var(--shadow);
+  }
+
+  .timeline-card-header {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 0.5rem 1rem;
+    margin-bottom: 0.5rem;
+  }
+
+  .timeline-card-header time {
+    font-size: 0.85rem;
+    color: var(--text-muted);
+    font-weight: 500;
+  }
+
+  .timeline-location {
+    font-size: 1.1rem;
+    font-weight: 700;
+    color: var(--text);
+  }
+
+  .timeline-desc {
+    margin: 0 0 1rem;
+    color: var(--text-muted);
+    font-size: 0.92rem;
+    line-height: 1.7;
+  }
+
+  /* Photos Grid */
+  .timeline-photos,
+  .timeline-photos-extra {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 0.5rem;
+  }
+
+  .timeline-photos-extra {
+    margin-top: 0.5rem;
+  }
+
+  .timeline-photo-item {
+    aspect-ratio: 4 / 3;
+    border-radius: 8px;
+    overflow: hidden;
+    cursor: pointer;
+  }
+
+  .timeline-photo-item img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    transition: transform 0.2s ease;
+  }
+
+  .timeline-photo-item:hover img {
+    transform: scale(1.05);
+  }
+
+  .timeline-more-btn {
+    grid-column: 1 / -1;
+    margin-top: 0.5rem;
+    padding: 0.5rem 1rem;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: transparent;
+    color: var(--accent);
+    font-size: 0.85rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.15s ease;
+  }
+
+  .timeline-more-btn:hover {
+    background: var(--accent);
+    color: white;
+    border-color: var(--accent);
+  }
+
+  /* Lightbox */
+  .lightbox {
+    position: fixed;
+    inset: 0;
+    z-index: 100;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgb(0 0 0 / 85%);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.2s ease;
+  }
+
+  .lightbox.active {
+    opacity: 1;
+    pointer-events: all;
+  }
+
+  .lightbox-img {
+    max-width: 90vw;
+    max-height: 85vh;
+    border-radius: 8px;
+    object-fit: contain;
+  }
+
+  .lightbox-close {
+    position: absolute;
+    top: 1.5rem;
+    right: 1.5rem;
+    width: 2.5rem;
+    height: 2.5rem;
+    border: none;
+    border-radius: 50%;
+    background: rgb(255 255 255 / 15%);
+    color: white;
+    font-size: 1.5rem;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .lightbox-close:hover {
+    background: rgb(255 255 255 / 30%);
+  }
+
+  /* Responsive */
+  @media (max-width: 768px) {
+    .timeline-node,
+    .timeline-node.left,
+    .timeline-node.right {
+      width: calc(100% - 3rem);
+      margin-left: 3rem;
+      padding-left: 1.5rem;
+      padding-right: 0;
+    }
+
+    .timeline-node.left .timeline-dot,
+    .timeline-node.right .timeline-dot {
+      left: -1.5rem;
+      right: auto;
+    }
+
+    .timeline-photos,
+    .timeline-photos-extra {
+      grid-template-columns: repeat(2, 1fr);
+    }
+  }
+</style>

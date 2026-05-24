@@ -1,0 +1,35 @@
+[
+  {
+    "date": "2025-05-18",
+    "location": "杭州西湖",
+    "description": "初夏的西湖，荷叶刚冒出水面，断桥上人不多，难得清静。",
+    "photos": [
+      "/photos/hangzhou-1.jpg",
+      "/photos/hangzhou-2.jpg",
+      "/photos/hangzhou-3.jpg",
+      "/photos/hangzhou-4.jpg"
+    ]
+  },
+  {
+    "date": "2025-04-05",
+    "location": "苏州拙政园",
+    "description": "清明时节的园林，春雨后空气清新，亭台楼阁倒映在水中。",
+    "photos": [
+      "/photos/suzhou-1.jpg",
+      "/photos/suzhou-2.jpg",
+      "/photos/suzhou-3.jpg"
+    ]
+  },
+  {
+    "date": "2025-02-14",
+    "location": "厦门鼓浪屿",
+    "description": "冬末的鼓浪屿，游客稀少，老建筑在阳光下格外好看。",
+    "photos": [
+      "/photos/xiamen-1.jpg",
+      "/photos/xiamen-2.jpg",
+      "/photos/xiamen-3.jpg",
+      "/photos/xiamen-4.jpg",
+      "/photos/xiamen-5.jpg"
+    ]
+  }
+]

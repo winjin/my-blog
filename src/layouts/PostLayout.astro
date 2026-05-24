@@ -1,0 +1,35 @@
+---
+import BaseLayout from './BaseLayout.astro';
+import Giscus from '../components/Giscus.astro';
+import { CATEGORIES } from '../consts';
+import type { CollectionEntry } from 'astro:content';
+
+interface Props {
+  post: CollectionEntry<'posts'>;
+}
+
+const { post } = Astro.props;
+const { title, description, category, tags, date } = post.data;
+const categoryInfo = CATEGORIES[category];
+---
+
+<BaseLayout title={title} description={description}>
+  <article class="prose">
+    <header class="page-header">
+      <span class="category-badge">{categoryInfo.label}</span>
+      <h1>{title}</h1>
+      <div class="post-meta">
+        <time datetime={date.toISOString()}>{date.toLocaleDateString('zh-CN')}</time>
+        {tags.length > 0 && (
+          <ul class="tag-list">
+            {tags.map((tag) => (
+              <li>{tag}</li>
+            ))}
+          </ul>
+        )}
+      </div>
+    </header>
+    <slot />
+  </article>
+  <Giscus />
+</BaseLayout>
