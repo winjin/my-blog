@@ -17,6 +17,11 @@ jobs:
           node-version: '20'
 
       - name: Install dependencies and build
+        env:
+          PUBLIC_GISCUS_REPO: winjin/my-blog
+          PUBLIC_GISCUS_REPO_ID: R_kgDOSmK3Zg
+          PUBLIC_GISCUS_CATEGORY: Announcements
+          PUBLIC_GISCUS_CATEGORY_ID: DIC_kwDOSmK3Zs4C9tpn
         run: |
           rm -f package-lock.json
           npm install
