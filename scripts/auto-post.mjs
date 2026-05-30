@@ -14,9 +14,9 @@ import { fileURLToPath } from 'url';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(__dirname, '..');
 
-const DEEPSEEK_API_KEY = process.env.DEEPSEEK_API_KEY;
-if (!DEEPSEEK_API_KEY) {
-  console.error('Error: DEEPSEEK_API_KEY environment variable is required');
+const AI_API_KEY = process.env.AI_API_KEY;
+if (!AI_API_KEY) {
+  console.error('Error: AI_API_KEY environment variable is required');
   process.exit(1);
 }
 
@@ -56,29 +56,36 @@ async function fetchTechCrunch() {
   }
 }
 
-// --- Call DeepSeek API ---
-async function callDeepSeek(messages) {
-  const res = await fetch('https://api.deepseek.com/chat/completions', {
+// --- Call AI API (Anthropic format) ---
+async function callAI(messages) {
+  const systemMsg = messages.find((m) => m.role === 'system');
+  const userMsgs = messages.filter((m) => m.role !== 'system');
+
+  const body = {
+    model: 'claude-haiku-4-5-20251001',
+    messages: userMsgs,
+    max_tokens: 4096,
+    temperature: 0.7,
+  };
+  if (systemMsg) body.system = systemMsg.content;
+
+  const res = await fetch('https://chat-ai.ctsdn.com:4346/anthropic/v1/messages', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      Authorization: `Bearer ${DEEPSEEK_API_KEY}`,
+      'x-api-key': AI_API_KEY,
+      'anthropic-version': '2023-06-01',
     },
-    body: JSON.stringify({
-      model: 'deepseek-chat',
-      messages,
-      temperature: 0.7,
-      max_tokens: 4096,
-    }),
+    body: JSON.stringify(body),
   });
 
   if (!res.ok) {
     const err = await res.text();
-    throw new Error(`DeepSeek API error ${res.status}: ${err}`);
+    throw new Error(`AI API error ${res.status}: ${err}`);
   }
 
   const data = await res.json();
-  return data.choices[0].message.content;
+  return data.content[0].text;
 }
 
 // --- Main ---
@@ -96,7 +103,7 @@ async function main() {
   // 2. Ask DeepSeek to pick the most valuable story
   const newsList = allNews.map((n, i) => `${i + 1}. [${n.source}] ${n.title} — ${n.url}`).join('\n');
 
-  const pickResponse = await callDeepSeek([
+  const pickResponse = await callAI([
     {
       role: 'system',
       content:
@@ -116,7 +123,7 @@ async function main() {
   // 3. Generate article
   const today = new Date().toISOString().split('T')[0];
 
-  const articleResponse = await callDeepSeek([
+  const articleResponse = await callAI([
     {
       role: 'system',
       content: `你是一位专业的中文科技博主，擅长深度分析科技趋势。请根据给定的新闻写一篇 800-1200 字的中文深度分析文章。

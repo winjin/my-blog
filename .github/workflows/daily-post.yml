@@ -1,13 +1,11 @@
-name: Daily Tech Post
+name: Build and Deploy
 
 on:
-  schedule:
-    # 每天 UTC 0:00（北京时间 8:00）
-    - cron: '0 0 * * *'
-  workflow_dispatch: # 支持手动触发
+  push:
+    branches: [main]
 
 jobs:
-  generate-and-deploy:
+  deploy:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -18,37 +16,12 @@ jobs:
         with:
           node-version: '20'
 
-      - name: Generate post
-        env:
-          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
-        run: node scripts/auto-post.mjs
-
-      - name: Check for changes
-        id: changes
-        run: |
-          if git diff --quiet && git diff --cached --quiet; then
-            echo "has_changes=false" >> $GITHUB_OUTPUT
-          else
-            echo "has_changes=true" >> $GITHUB_OUTPUT
-          fi
-
-      - name: Commit and push
-        if: steps.changes.outputs.has_changes == 'true'
-        run: |
-          git config user.name "Auto Post Bot"
-          git config user.email "bot@example.com"
-          git add src/content/posts/
-          git commit -m "auto: daily tech post $(date +%Y-%m-%d)"
-          git push
-
       - name: Install dependencies and build
-        if: steps.changes.outputs.has_changes == 'true'
         run: |
           npm install
           npm run build
 
       - name: Deploy to server via rsync
-        if: steps.changes.outputs.has_changes == 'true'
         env:
           DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
           DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
