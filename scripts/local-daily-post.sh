@@ -20,6 +20,8 @@ if [ -z "$AI_API_KEY" ]; then
   exit 1
 fi
 
+export NODE_TLS_REJECT_UNAUTHORIZED=0
+
 # 生成文章
 node scripts/auto-post.mjs
 
