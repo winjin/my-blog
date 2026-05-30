@@ -18,6 +18,7 @@ jobs:
 
       - name: Install dependencies and build
         run: |
+          rm -f package-lock.json
           npm install
           npm run build
 
