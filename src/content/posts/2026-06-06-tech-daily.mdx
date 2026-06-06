@@ -1,0 +1,84 @@
+---
+title: "AI 编程代理全景：Claude Code、Codex 与大模型公司的新战场"
+description: "梳理当前主流 AI 编程代理工具与其背后大模型、公司之间的关系，理解这场开发者工具革命的竞争格局。"
+category: tech
+tags: ["AI", "Claude Code", "Codex", "GitHub Copilot", "开发者工具", "大模型"]
+date: 2026-06-06
+draft: false
+cover: "https://images.unsplash.com/photo-1677442136019-21780ecad995?w=1200&h=630&fit=crop"
+---
+
+2026 年，AI 编程代理（AI Coding Agent）已经不再是概念产品，而是开发者日常工作流的核心组件。从终端到 IDE，从代码补全到全自动 PR，这些工具的背后是一场大模型公司之间的新战争。
+
+## 谁在做什么：工具与公司的对应关系
+
+当前 AI 编程工具可以分为两大阵营：**模型公司自研工具**和**独立第三方工具**。
+
+### 模型公司自研：从模型到产品的闭环
+
+| 工具 | 公司 | 底层模型 | 形态 |
+|------|------|----------|------|
+| **Claude Code** | Anthropic | Claude 4 Opus/Sonnet/Haiku | CLI + IDE + Web |
+| **Codex** | OpenAI | codex-1 (基于 o3)、o4-mini | Web + CLI |
+| **Gemini Code Assist / Jules** | Google | Gemini 2.5 Pro/Flash | IDE + Cloud |
+| **Amazon Q Developer** | AWS | Nova 系列 + 自研模型 | IDE + AWS 控制台 |
+
+这些公司既造模型又造工具，形成了从底层能力到上层产品的完整闭环。Anthropic 的 Claude Code 跑在自家 Claude 4 家族上，OpenAI 的 Codex 用了专为代码优化的 o3 衍生模型，Google 则把 Gemini 2.5 Pro 的百万级上下文窗口变成了理解整个代码仓库的杀手锏。
+
+### 独立第三方：多模型策略
+
+| 工具 | 公司 | 支持模型 | 定位 |
+|------|------|----------|------|
+| **GitHub Copilot** | GitHub/Microsoft | GPT-4o、Claude、Gemini（可选） | 最大用户基数 |
+| **Cursor** | Anysphere | Claude、GPT-4、Gemini（可切换） | AI-first IDE |
+| **Windsurf** | Codeium（已被 OpenAI 收购） | 多模型 | 流式代理 |
+| **Devin** | Cognition Labs | 自研 | 全自动软件工程师 |
+
+第三方工具的核心策略是**模型无关性** —— 让用户自由选择底层模型。Cursor 允许你一键切换 Claude Sonnet 和 GPT-4o；GitHub Copilot 从早期只绑定 OpenAI 模型，到如今开放 Claude 和 Gemini 选项。这反映了一个现实：没有哪个模型在所有编程任务上都占绝对优势。
+
+## 大模型公司为什么要亲自下场做工具？
+
+答案很直接：**争夺开发者入口**。
+
+大模型的 API 调用是按 token 计费的，谁的工具被更多开发者使用，谁就能获得持续的 API 收入。Claude Code 每天帮你写代码、提 PR，消耗的都是 Anthropic 的 token。这不是副业，而是商业模式的核心。
+
+更深层的逻辑是**数据飞轮**：开发者使用工具 → 产生真实编程场景数据 → 反馈优化模型 → 模型更好 → 更多人使用。Anthropic、OpenAI、Google 都在赌这个循环。
+
+## 技术路线的分化
+
+### Anthropic (Claude Code)：本地代理 + 深度工具使用
+
+Claude Code 的思路是把 AI 放进你的终端，它可以直接读写文件、执行 shell 命令、操作 git、调用 GitHub CLI。这是一种「驻场工程师」模式 —— AI 拥有和你相同的开发环境权限。
+
+核心优势是 Claude 4 Opus 的推理能力和超长上下文。它适合复杂的多文件重构、跨模块 debug 这类需要深度思考的任务。
+
+### OpenAI (Codex)：云端沙箱执行
+
+Codex 走了不同的路：把代码丢到云端沙箱里跑。它会克隆你的仓库到隔离环境，在里面修改、编译、测试，最后给你一个 PR。好处是安全隔离，坏处是与你的本地环境脱节。
+
+底层的 codex-1 模型基于 o3 推理模型，擅长需要多步推理的编程任务。
+
+### Google (Gemini Code Assist / Jules)：超长上下文 + 云原生
+
+Google 打的是上下文窗口这张牌。Gemini 2.5 Pro 的百万 token 上下文意味着它可以一次性「看完」整个中大型项目。Jules 是异步代理，类似 Codex 的云端模式，自动处理 GitHub Issues。
+
+## 竞争格局与开发者选择
+
+对开发者来说，2026 年的现实是：
+
+- **如果你深度绑定某个生态**（比如 AWS），用该生态的工具（Amazon Q）最顺畅
+- **如果你追求灵活性**，Cursor 和 GitHub Copilot 的多模型支持给你最大选择空间
+- **如果你偏好终端/CLI 工作流**，Claude Code 目前是体验最完整的
+- **如果你需要全自动化**，Codex 和 Devin 走在最前面
+
+这些工具之间的竞争本质上是大模型公司之间的代理战争。Anthropic 想通过 Claude Code 锁定开发者到 Claude 生态，OpenAI 想通过 Codex + 收购 Windsurf 占领 IDE 入口，Google 想通过 Gemini 的上下文优势吃下企业级市场。
+
+## 展望
+
+值得注意的趋势是：模型公司正在从「卖模型 API」转向「卖完整开发者体验」。这和云计算早期 IaaS → PaaS → SaaS 的演进路径如出一辙。AI 编程工具就是大模型时代的 SaaS。
+
+对开发者而言，这意味着你使用的工具正在越来越强，但也意味着你的工作流正在被绑定到某个特定的 AI 供应商。保持多工具切换能力，可能是这个时代最重要的职业技能之一。
+
+---
+
+> 本文由 AI 整理生成，涵盖 Claude Code、OpenAI Codex、GitHub Copilot、Cursor、Gemini 等工具的关系梳理，仅供参考。
