@@ -1,0 +1,213 @@
+---
+title: "Claude Code 技能与 MCP 配置指南：让 AI 编程助手如虎添翼"
+description: "详解 Claude Code 的 Skill 系统和 MCP 协议配置，介绍最流行的插件和服务器，打造专属 AI 开发环境。"
+category: tech
+tags: ["Claude Code", "MCP", "AI工具", "开发者工具", "插件配置"]
+date: 2026-06-04
+draft: false
+cover: "https://images.unsplash.com/photo-1558494949-ef010cbdcc31?w=1200&h=630&fit=crop"
+---
+
+Claude Code 作为 Anthropic 推出的 AI 编程代理，其强大之处不仅在于底层模型，更在于它的可扩展性。通过 **Skill（技能/斜杠命令）** 和 **MCP（Model Context Protocol）** 两套机制，你可以把它从一个通用助手变成完全适配你工作流的专属工具。
+
+## 一、Skill：开箱即用的斜杠命令
+
+Skill 是 Claude Code 内置的功能快捷方式，通过 `/命令名` 调用。以下是最实用的几个：
+
+### 核心技能一览
+
+| 命令 | 功能 | 使用场景 |
+|------|------|----------|
+| `/init` | 初始化 CLAUDE.md 项目文档 | 新项目首次配置 |
+| `/review` | 代码审查 | PR 合并前的质量检查 |
+| `/security-review` | 安全审计 | 检查当前分支的安全风险 |
+| `/simplify` | 代码简化 | 重构冗余代码 |
+| `/fewer-permission-prompts` | 减少权限弹窗 | 自动生成常用操作白名单 |
+| `/update-config` | 修改配置 | 设置 hooks、权限、环境变量 |
+| `/loop` | 定时循环执行 | 持续监控、轮询状态 |
+| `/claude-api` | Claude API 开发辅助 | 构建基于 Anthropic SDK 的应用 |
+
+### 最佳实践
+
+**项目初始化三连：**
+
+```bash
+# 1. 生成项目文档
+claude /init
+
+# 2. 自动配置权限白名单（减少烦人的确认弹窗）
+claude /fewer-permission-prompts
+
+# 3. 配置项目设置
+claude /update-config
+```
+
+**日常开发流程：**
+
+```bash
+# 提交前安全检查
+claude /security-review
+
+# PR 代码审查
+claude /review
+
+# 代码质量优化
+claude /simplify
+```
+
+## 二、MCP：连接一切的协议
+
+MCP（Model Context Protocol）是让 Claude Code 与外部工具和数据源交互的标准化协议。每个 MCP Server 相当于给 Claude 装上一个「新器官」—— 让它能操作数据库、调用 API、控制浏览器等等。
+
+### 最流行的 MCP Server
+
+#### 开发相关
+
+| Server | 功能 | 安装命令 |
+|--------|------|----------|
+| **@modelcontextprotocol/server-filesystem** | 文件系统操作 | `claude mcp add filesystem -- npx @modelcontextprotocol/server-filesystem /path` |
+| **@modelcontextprotocol/server-github** | GitHub API 集成 | `claude mcp add github -- npx @modelcontextprotocol/server-github` |
+| **@modelcontextprotocol/server-postgres** | PostgreSQL 查询 | `claude mcp add postgres -- npx @modelcontextprotocol/server-postgres` |
+| **@modelcontextprotocol/server-puppeteer** | 浏览器自动化 | `claude mcp add puppeteer -- npx @modelcontextprotocol/server-puppeteer` |
+
+#### 协作与通讯
+
+| Server | 功能 | 用途 |
+|--------|------|------|
+| **server-slack** | Slack 消息收发 | 团队协作自动化 |
+| **server-linear** | Linear 任务管理 | 同步 Issue 和项目状态 |
+| **server-notion** | Notion 文档操作 | 知识库读写 |
+
+#### 数据与搜索
+
+| Server | 功能 | 用途 |
+|--------|------|------|
+| **server-brave-search** | Brave 搜索引擎 | 实时网络搜索 |
+| **server-memory** | 持久化记忆 | 跨会话知识存储 |
+| **server-sqlite** | SQLite 操作 | 本地数据库查询 |
+
+### MCP 配置方式
+
+**方式一：命令行添加**
+
+```bash
+# 添加 stdio 类型的 MCP Server
+claude mcp add my-server -- npx my-mcp-server --flag value
+
+# 添加 HTTP 类型的 MCP Server
+claude mcp add --transport http my-api https://api.example.com/mcp
+
+# 带环境变量
+claude mcp add -e API_KEY=xxx -e DB_URL=yyy my-db -- npx db-mcp-server
+
+# 查看已配置的 Server
+claude mcp list
+
+# 删除
+claude mcp remove my-server
+```
+
+**方式二：配置文件（.mcp.json）**
+
+在项目根目录创建 `.mcp.json`：
+
+```json
+{
+  "mcpServers": {
+    "github": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["@modelcontextprotocol/server-github"],
+      "env": {
+        "GITHUB_TOKEN": "ghp_xxxx"
+      }
+    },
+    "postgres": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["@modelcontextprotocol/server-postgres"],
+      "env": {
+        "DATABASE_URL": "postgresql://user:pass@localhost:5432/mydb"
+      }
+    },
+    "puppeteer": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["@modelcontextprotocol/server-puppeteer"]
+    }
+  }
+}
+```
+
+### 配置文件优先级
+
+1. **项目本地** `.claude/settings.local.json` → 最高优先级，不提交到 git
+2. **项目级** `.claude/settings.json` → 团队共享配置
+3. **全局** `~/.claude/settings.json` → 所有项目通用
+
+## 三、实用配置示例
+
+### 前端项目推荐配置
+
+```json
+{
+  "mcpServers": {
+    "puppeteer": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["@modelcontextprotocol/server-puppeteer"]
+    }
+  }
+}
+```
+
+配合权限设置：
+
+```json
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm run *)",
+      "Bash(npx astro *)",
+      "Bash(git add *)",
+      "Bash(git commit *)"
+    ]
+  }
+}
+```
+
+### 全栈项目推荐配置
+
+```json
+{
+  "mcpServers": {
+    "github": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["@modelcontextprotocol/server-github"],
+      "env": { "GITHUB_TOKEN": "${GITHUB_TOKEN}" }
+    },
+    "postgres": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["@modelcontextprotocol/server-postgres"],
+      "env": { "DATABASE_URL": "${DATABASE_URL}" }
+    },
+    "puppeteer": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["@modelcontextprotocol/server-puppeteer"]
+    }
+  }
+}
+```
+
+## 总结
+
+Skill 和 MCP 是 Claude Code 从「能用」到「好用」的关键跳板。Skill 解决的是「AI 能做什么标准化操作」，MCP 解决的是「AI 能连接什么外部系统」。两者结合，你可以让 Claude Code 从单纯的代码生成工具，变成贯穿开发、测试、部署、协作全流程的自动化引擎。
+
+建议从 `/init` + `/fewer-permission-prompts` 开始，再根据项目需要逐步添加 MCP Server。不要一次性配置太多 —— 每多一个 Server，Claude 的上下文里就多了一批可用工具，保持精简才能让 AI 做出最准确的判断。
+
+---
+
+> 本文由 AI 整理生成，介绍 Claude Code 的 Skill 和 MCP 配置方法，仅供参考。

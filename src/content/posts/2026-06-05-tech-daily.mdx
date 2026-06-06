@@ -1,0 +1,239 @@
+---
+title: "项目里如何高效配置和使用 Claude Code：从入门到飞起"
+description: "分享在实际项目中配置 Claude Code 的最佳实践，包括 CLAUDE.md 编写、权限管理、Hooks 自动化和高效工作流技巧。"
+category: tech
+tags: ["Claude Code", "开发效率", "AI工具", "工作流", "最佳实践"]
+date: 2026-06-05
+draft: false
+cover: "https://images.unsplash.com/photo-1517694712202-14dd9538aa97?w=1200&h=630&fit=crop"
+---
+
+用了几个月 Claude Code，从最初的「哇这个好厉害」到现在的「它已经是我团队的一员了」，中间最大的变量不是模型能力的提升，而是**项目配置的优化**。一个配置良好的项目，Claude Code 的输出质量和效率能翻倍。本文分享我在实际项目中摸索出的配置实践。
+
+## 一、CLAUDE.md：给 AI 一份项目说明书
+
+CLAUDE.md 是 Claude Code 进入项目时首先读取的文件，相当于给 AI 一份「入职手册」。写好它，能减少 80% 的重复解释。
+
+### 推荐结构
+
+```markdown
+# 项目名称
+
+一句话描述项目做什么。
+
+## 技术栈
+
+- 框架：Astro 5 + React
+- 样式：Tailwind CSS 4
+- 部署：Vercel
+- 包管理：npm
+
+## 常用命令
+
+- `npm run dev` - 启动开发服务器
+- `npm run build` - 构建生产版本
+- `npm run test` - 运行测试
+
+## 项目结构
+
+- `src/content/posts/` - 博客文章（MDX）
+- `src/components/` - 可复用组件
+- `scripts/` - 自动化脚本
+
+## 开发规范
+
+- 组件使用 PascalCase 命名
+- 工具函数使用 camelCase
+- 提交信息遵循 Conventional Commits
+- 不使用 any 类型
+
+## 注意事项
+
+- API 调用需要 NODE_TLS_REJECT_UNAUTHORIZED=0（自签证书）
+- 部署前必须通过 `npm run build` 验证
+```
+
+### 关键原则
+
+1. **保持简洁** —— 500 字以内最佳，Claude 不需要小说
+2. **写约束而非教程** —— 「不要用 any」比「TypeScript 是一种类型安全的语言...」有用得多
+3. **写例外而非常识** —— 只记录 Claude 猜不到的东西
+4. **及时更新** —— 项目演进了就更新，过期信息比没有信息更糟
+
+## 二、权限配置：在安全和效率间找平衡
+
+Claude Code 默认会对每个「有风险」的操作请求确认。这很安全，但写 5 分钟代码要点 20 次确认就太低效了。
+
+### 配置文件：`.claude/settings.local.json`
+
+```json
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm run *)",
+      "Bash(npx *)",
+      "Bash(git status)",
+      "Bash(git diff *)",
+      "Bash(git log *)",
+      "Bash(git add *)",
+      "Bash(git commit *)",
+      "Bash(ls *)",
+      "Bash(find *)",
+      "Bash(grep *)",
+      "Bash(cat *)",
+      "Read",
+      "Edit",
+      "Write"
+    ],
+    "deny": [
+      "Bash(rm -rf *)",
+      "Bash(git push --force *)",
+      "Bash(git reset --hard *)"
+    ]
+  }
+}
+```
+
+### 分层策略
+
+| 级别 | 文件 | 用途 |
+|------|------|------|
+| 全局 | `~/.claude/settings.json` | 所有项目通用的安全权限 |
+| 项目共享 | `.claude/settings.json` | 团队统一配置，提交到 git |
+| 项目本地 | `.claude/settings.local.json` | 个人偏好，不提交（含 token 等） |
+
+**快捷方式：** 运行 `/fewer-permission-prompts`，Claude 会扫描你的历史会话，自动生成适合当前项目的权限白名单。
+
+## 三、Hooks：让 Claude 触发自动化
+
+Hooks 是在 Claude Code 特定事件发生时自动执行的 shell 命令。
+
+### 常用 Hook 场景
+
+**任务完成通知：**
+
+```json
+{
+  "hooks": {
+    "Stop": [{
+      "matcher": "",
+      "hooks": [{
+        "type": "command",
+        "command": "osascript -e 'display notification \"Claude 完成了任务\" with title \"Claude Code\"'",
+        "timeout": 5
+      }]
+    }]
+  }
+}
+```
+
+**提交前自动 lint：**
+
+```json
+{
+  "hooks": {
+    "PreCommand": [{
+      "matcher": "git commit",
+      "hooks": [{
+        "type": "command",
+        "command": "npm run lint",
+        "timeout": 30
+      }]
+    }]
+  }
+}
+```
+
+通过 `/update-config` 命令可以方便地配置这些 hooks。
+
+## 四、高效使用技巧
+
+### 1. 用 `--continue` 保持上下文
+
+```bash
+# 继续上次的对话
+claude --continue
+
+# 恢复特定会话
+claude -r SESSION_ID
+```
+
+当一个任务跨越多次对话时，`--continue` 能让 Claude 记住之前的所有上下文，避免重复解释。
+
+### 2. 善用 Worktree 隔离实验
+
+对于有风险的改动，让 Claude 在 worktree 中操作：
+
+```
+> 创建一个 worktree 来重构认证模块
+```
+
+Claude 会在隔离的 git worktree 中工作，不影响你的主分支。满意了再合并，不满意直接删除。
+
+### 3. 批量操作用 `/loop`
+
+```
+> /loop 5m 检查部署状态，如果成功就通知我
+```
+
+适合等待 CI/CD、监控部署等需要轮询的场景。
+
+### 4. 用任务列表管理复杂需求
+
+对于复杂任务，明确告诉 Claude 你期望的步骤：
+
+```
+帮我完成以下任务：
+1. 添加用户头像上传功能
+2. 限制图片大小 2MB 以内
+3. 支持 jpg/png/webp 格式
+4. 上传后自动裁剪为正方形
+5. 写单元测试
+```
+
+Claude 会创建内部任务列表逐步执行，你能看到进度。
+
+### 5. 利用 Memory 记住偏好
+
+Claude Code 有自动记忆系统。当你纠正它的行为时，它会记住：
+
+```
+> 不要在函数里加注释，我喜欢干净的代码
+> 提交信息用英文
+> 测试文件放在 __tests__ 目录下
+```
+
+这些偏好会被持久化，下次对话自动生效。
+
+## 五、我的日常工作流
+
+```
+早上开始：
+  claude --continue     # 接上昨天的上下文
+
+开发新功能：
+  描述需求 → Claude 进入 Plan Mode → 确认方案 → 自动实现
+
+提交代码：
+  claude /review        # 让它先审查一遍自己的代码
+  确认无误 → 让它 commit + push
+
+部署前：
+  claude /security-review   # 安全检查
+  确认 → 合并 → 部署
+```
+
+## 总结
+
+高效使用 Claude Code 的核心不是学更多命令，而是**减少 AI 的信息差和操作摩擦**：
+
+- **CLAUDE.md** 减少信息差 —— 告诉它项目是什么
+- **权限配置** 减少操作摩擦 —— 让它少问你「可以吗」
+- **Hooks** 减少人工介入 —— 让例行操作自动化
+- **Memory** 减少重复沟通 —— 让它记住你的偏好
+
+把这四件事做好，Claude Code 就不再只是一个「会写代码的聊天机器人」，而是一个真正理解你项目、适应你习惯的编程搭档。
+
+---
+
+> 本文由 AI 整理生成，分享 Claude Code 在项目中的高效配置实践，仅供参考。
