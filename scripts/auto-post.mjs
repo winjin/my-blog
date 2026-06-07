@@ -121,7 +121,7 @@ async function main() {
   console.log(`Selected: "${picked.title}" from ${picked.source}`);
 
   // 3. Generate article
-  const today = new Date().toISOString().split('T')[0];
+  const today = process.env.OVERRIDE_DATE || new Date().toISOString().split('T')[0];
 
   const articleResponse = await callAI([
     {
