@@ -31,5 +31,43 @@
       "/photos/xiamen-4.jpg",
       "/photos/xiamen-5.jpg"
     ]
+  },
+  {
+    "date": "2021-06-24",
+    "location": "夜色河畔",
+    "description": "夏夜的河边步道，路灯微光映着两岸绿意，城市安静下来的时刻。",
+    "photos": [
+      "/photos/IMG_1478.jpg"
+    ]
+  },
+  {
+    "date": "2021-05-17",
+    "location": "湖畔日落",
+    "description": "初夏傍晚的湖边，夕阳穿过云层洒在水面上，垂柳倒影如画。",
+    "photos": [
+      "/photos/IMG_0910.jpg",
+      "/photos/IMG_0912.jpg",
+      "/photos/IMG_0914.jpg",
+      "/photos/IMG_0916.jpg"
+    ]
+  },
+  {
+    "date": "2020-05-31",
+    "location": "公园漫步",
+    "description": "初夏午后的城市公园，阳光正好，跑道上三三两两的人，悠闲而自在。",
+    "photos": [
+      "/photos/IMG_0074.jpg",
+      "/photos/IMG_0075.jpg"
+    ]
+  },
+  {
+    "date": "2019-01-28",
+    "location": "冬日街角",
+    "description": "寒冬的城市街头，枯枝映着蓝天，阳光打在建筑立面上，冷冽而清澈。",
+    "photos": [
+      "/photos/IMG_0356.jpg",
+      "/photos/IMG_0358.jpg",
+      "/photos/IMG_0359.jpg"
+    ]
   }
 ]
