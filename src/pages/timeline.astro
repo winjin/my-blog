@@ -57,36 +57,31 @@ const events = timelineData.sort((a, b) => new Date(b.date).getTime() - new Date
     if (dots.length === 0) return;
 
     const timelineRect = timeline.getBoundingClientRect();
-    const timelineTop = timeline.offsetTop;
     const centerX = timeline.offsetWidth / 2;
-    const amplitude = 40;
 
-    // Gather dot Y positions relative to the timeline container
+    // Gather actual dot positions relative to timeline container
     const points: { x: number; y: number }[] = [];
-    dots.forEach((dot, i) => {
+    dots.forEach((dot) => {
       const dotRect = dot.getBoundingClientRect();
+      const x = dotRect.left - timelineRect.left + dot.offsetWidth / 2;
       const y = dotRect.top - timelineRect.top + dot.offsetHeight / 2;
-      // Alternate x: left nodes curve right at peak, right nodes curve left
-      const x = i % 2 === 0 ? centerX - amplitude : centerX + amplitude;
       points.push({ x, y });
     });
 
-    // Build a smooth curve path through all points
-    // Start from top center, curve to first point, then through each point
     const svgWidth = timeline.offsetWidth;
     const svgHeight = timeline.offsetHeight;
     svg.setAttribute('viewBox', `0 0 ${svgWidth} ${svgHeight}`);
     svg.setAttribute('width', `${svgWidth}`);
     svg.setAttribute('height', `${svgHeight}`);
 
+    // Start from top center, curve through each dot
     let d = `M ${centerX} 0`;
 
     for (let i = 0; i < points.length; i++) {
       const p = points[i];
       const prevY = i === 0 ? 0 : points[i - 1].y;
-      const cpY = (prevY + p.y) / 2;
       const prevX = i === 0 ? centerX : points[i - 1].x;
-      // Quadratic curve: control point at midpoint Y, with x of previous point
+      const cpY = (prevY + p.y) / 2;
       d += ` Q ${prevX} ${cpY}, ${p.x} ${p.y}`;
     }
 
