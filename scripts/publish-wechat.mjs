@@ -50,8 +50,19 @@ async function getAccessToken() {
 // --- Upload image to WeChat material ---
 async function uploadImage(token, imageUrl) {
   console.log('  Downloading cover image...');
-  const imgRes = await fetch(imageUrl);
-  const imgBuffer = Buffer.from(await imgRes.arrayBuffer());
+  let imgBuffer;
+  try {
+    const imgRes = await fetch(imageUrl);
+    if (!imgRes.ok) throw new Error(`HTTP ${imgRes.status}`);
+    imgBuffer = Buffer.from(await imgRes.arrayBuffer());
+  } catch (e) {
+    // Fallback: use curl to download (handles TLS issues)
+    const { execSync } = await import('child_process');
+    const tmpPath = '/tmp/wechat-cover-tmp.jpg';
+    execSync(`curl -sL "${imageUrl}" -o ${tmpPath} --max-time 15`);
+    const { readFileSync } = await import('fs');
+    imgBuffer = readFileSync(tmpPath);
+  }
 
   const boundary = '----WebKitFormBoundary' + Math.random().toString(36).slice(2);
   const filename = 'cover.jpg';
