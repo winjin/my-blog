@@ -118,6 +118,23 @@ function mdToWechatHtml(md) {
   // Remove the trailing AI disclaimer
   html = html.replace(/---\s*\n\s*>.*AI.*生成.*$/s, '');
 
+  // Code blocks — extract first to protect content from other transformations
+  const codeBlocks = [];
+  html = html.replace(/```[\w]*\n([\s\S]*?)```/g, (_, code) => {
+    const escaped = code.replace(/</g, '&lt;').replace(/>/g, '&gt;').trim();
+    const placeholder = `__CODE_BLOCK_${codeBlocks.length}__`;
+    codeBlocks.push(`<pre style="background:#f6f8fa;border-radius:6px;padding:16px;overflow-x:auto;font-size:13px;line-height:1.6;margin:16px 0;"><code>${escaped}</code></pre>`);
+    return placeholder;
+  });
+
+  // Inline code — extract to protect from other transformations
+  const inlineCodes = [];
+  html = html.replace(/`([^`]+)`/g, (_, code) => {
+    const placeholder = `__INLINE_CODE_${inlineCodes.length}__`;
+    inlineCodes.push(`<code style="background:#f0f0f0;padding:2px 6px;border-radius:3px;font-size:13px;color:#d14;">${code}</code>`);
+    return placeholder;
+  });
+
   // Headers
   html = html.replace(/^### (.+)$/gm, '<h3 style="font-size:16px;font-weight:bold;color:#333;margin:20px 0 10px;">$1</h3>');
   html = html.replace(/^## (.+)$/gm, '<h2 style="font-size:18px;font-weight:bold;color:#1a1a1a;margin:25px 0 12px;border-left:4px solid #07c160;padding-left:10px;">$1</h2>');
@@ -127,15 +144,6 @@ function mdToWechatHtml(md) {
 
   // Italic
   html = html.replace(/\*(.+?)\*/g, '<em>$1</em>');
-
-  // Code blocks
-  html = html.replace(/```[\w]*\n([\s\S]*?)```/g, (_, code) => {
-    const escaped = code.replace(/</g, '&lt;').replace(/>/g, '&gt;').trim();
-    return `<pre style="background:#f6f8fa;border-radius:6px;padding:16px;overflow-x:auto;font-size:13px;line-height:1.6;margin:16px 0;"><code>${escaped}</code></pre>`;
-  });
-
-  // Inline code
-  html = html.replace(/`([^`]+)`/g, '<code style="background:#f0f0f0;padding:2px 6px;border-radius:3px;font-size:13px;color:#d14;">$1</code>');
 
   // Tables
   html = html.replace(/\|(.+)\|\n\|[-| :]+\|\n((?:\|.+\|\n?)*)/g, (_, header, rows) => {
@@ -166,6 +174,14 @@ function mdToWechatHtml(md) {
 
   // Clean up empty paragraphs
   html = html.replace(/<p[^>]*>\s*<\/p>/g, '');
+
+  // Restore code blocks and inline code
+  codeBlocks.forEach((block, i) => {
+    html = html.replace(`__CODE_BLOCK_${i}__`, block);
+  });
+  inlineCodes.forEach((code, i) => {
+    html = html.replace(`__INLINE_CODE_${i}__`, code);
+  });
 
   // Wrap in container
   html = `<div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;padding:10px;line-height:1.8;">${html}</div>`;
