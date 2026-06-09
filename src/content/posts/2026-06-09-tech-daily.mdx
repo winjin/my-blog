@@ -1,0 +1,420 @@
+---
+title: "Claude Code 完全指南：从入门到精通的 AI 编程搭档"
+description: "由浅入深全面解析 Claude Code 的使用方法，涵盖基础命令、配置技巧、Skills 系统、MCP 集成和高级工作流实例。"
+category: tech
+tags: ["Claude Code", "AI编程", "开发者工具", "CLI", "工作流自动化"]
+date: 2026-06-09
+draft: false
+cover: "https://images.unsplash.com/photo-1607799279861-4dd421887fb3?w=1200&h=630&fit=crop"
+---
+
+Claude Code 是 Anthropic 推出的 AI 编程代理，它不只是一个聊天机器人，而是一个能读写文件、执行命令、操作 Git、理解整个代码库的「AI 程序员」。本文从零开始，带你掌握它的全部能力。
+
+## 第一章：快速上手
+
+### 安装与启动
+
+```bash
+# 安装（需要 Node.js 18+）
+npm install -g @anthropic-ai/claude-code
+
+# 直接启动交互式对话
+claude
+
+# 带一句话启动
+claude "帮我看看这个项目的架构"
+```
+
+### 最基础的用法
+
+进入交互界面后，你可以直接用自然语言描述需求：
+
+```
+> 读一下 src/main.ts，告诉我入口函数做了什么
+> 帮我写一个用户注册的 API 端点
+> 这个 bug 怎么修？报错信息是 TypeError: Cannot read property 'id' of undefined
+```
+
+Claude Code 会自己决定读哪些文件、执行什么命令、怎么修改代码，你只需确认它的操作。
+
+### 常用启动参数
+
+```bash
+claude                        # 交互模式
+claude --continue             # 继续上次对话（保持上下文）
+claude --resume               # 恢复历史会话（弹出选择器）
+claude --model opus           # 指定使用 Opus 模型（最强）
+claude --model sonnet         # 使用 Sonnet（平衡速度和能力）
+claude --print "查询"         # 非交互模式，输出结果后退出
+```
+
+## 第二章：核心配置
+
+### CLAUDE.md —— 项目说明书
+
+在项目根目录创建 `CLAUDE.md`，Claude Code 每次进入项目都会自动读取它：
+
+```markdown
+# 我的项目
+
+## 技术栈
+- 框架：Astro 5 + React 19
+- 样式：Tailwind CSS 4
+- 部署：Vercel
+
+## 常用命令
+- npm run dev — 开发服务器
+- npm run build — 构建
+- npm run test — 测试
+
+## 规范
+- 使用 TypeScript strict 模式
+- 组件使用 PascalCase
+- 提交信息遵循 Conventional Commits
+- 禁止使用 any 类型
+```
+
+一键生成：运行 `/init`，Claude 会分析你的项目并自动生成。
+
+### 权限配置 —— 该放手时就放手
+
+每次操作都要点确认很烦？配置权限白名单：
+
+**文件：`.claude/settings.local.json`**
+
+```json
+{
+  "permissions": {
+    "allow": [
+      "Bash(git *)",
+      "Bash(npm run *)",
+      "Bash(npx *)",
+      "Bash(ls *)",
+      "Bash(find *)",
+      "Bash(grep *)",
+      "Read",
+      "Edit",
+      "Write",
+      "WebSearch"
+    ],
+    "deny": [
+      "Bash(rm -rf *)",
+      "Bash(git push --force *)",
+      "Bash(git reset --hard *)"
+    ]
+  }
+}
+```
+
+或者更简单 —— 运行 `/fewer-permission-prompts`，它会扫描你的使用历史自动生成白名单。
+
+### 三层配置体系
+
+| 层级 | 文件路径 | 适用范围 |
+|------|----------|----------|
+| 全局 | `~/.claude/settings.json` | 所有项目 |
+| 项目共享 | `.claude/settings.json` | 当前项目（提交到 Git） |
+| 项目本地 | `.claude/settings.local.json` | 当前项目（不提交） |
+
+优先级：本地 > 项目 > 全局
+
+## 第三章：Skills —— 内置超能力
+
+Skills 是以 `/` 开头的内置命令，覆盖开发中的高频场景：
+
+### 代码质量
+
+| 命令 | 作用 | 使用场景 |
+|------|------|----------|
+| `/review` | PR 代码审查 | 合并前检查 |
+| `/security-review` | 安全审计 | 发布前扫描漏洞 |
+| `/simplify` | 代码精简优化 | 重构冗余代码 |
+
+### 项目管理
+
+| 命令 | 作用 | 使用场景 |
+|------|------|----------|
+| `/init` | 生成 CLAUDE.md | 新项目初始化 |
+| `/batch` | 大规模并行修改 | 跨文件重构（5-30 个 worktree 并行） |
+| `/loop 5m <命令>` | 定时循环执行 | 监控部署、轮询 CI |
+
+### 配置与效率
+
+| 命令 | 作用 | 使用场景 |
+|------|------|----------|
+| `/update-config` | 修改设置 | 配置 hooks、权限、环境变量 |
+| `/fewer-permission-prompts` | 减少确认弹窗 | 自动生成权限白名单 |
+| `/remember` | 存储记忆 | 让 Claude 跨会话记住信息 |
+
+### 开发辅助
+
+| 命令 | 作用 | 使用场景 |
+|------|------|----------|
+| `/claude-api` | Claude API 开发 | 构建 Anthropic SDK 应用 |
+| `/insights` | 会话分析报告 | 了解使用模式 |
+| `/team-onboarding` | 团队上手指南 | 帮队友配置 Claude Code |
+
+## 第四章：MCP —— 连接万物的协议
+
+MCP（Model Context Protocol）让 Claude Code 能与外部服务通信。
+
+### 添加 MCP Server
+
+```bash
+# HTTP 类型（远程服务）
+claude mcp add --transport http sentry https://mcp.sentry.dev/mcp
+
+# stdio 类型（本地进程）
+claude mcp add github -- npx @modelcontextprotocol/server-github
+
+# 带环境变量
+claude mcp add -e API_KEY=xxx my-db -- npx db-server
+
+# 管理
+claude mcp list       # 列出所有
+claude mcp remove xxx # 删除
+```
+
+### 热门 MCP Server
+
+| Server | 用途 | 类型 |
+|--------|------|------|
+| GitHub | 仓库/PR/Issue 操作 | stdio |
+| PostgreSQL | 数据库查询 | stdio |
+| Puppeteer | 浏览器自动化 | stdio |
+| Sentry | 错误追踪 | HTTP |
+| Cloudflare | CDN/Workers 管理 | HTTP |
+| Slack | 团队消息 | stdio |
+| Stripe | 支付 API | HTTP |
+
+### 配置文件方式
+
+项目根目录的 `.mcp.json`：
+
+```json
+{
+  "mcpServers": {
+    "github": {
+      "command": "npx",
+      "args": ["@modelcontextprotocol/server-github"],
+      "env": { "GITHUB_TOKEN": "${GITHUB_TOKEN}" }
+    },
+    "sentry": {
+      "type": "http",
+      "url": "https://mcp.sentry.dev/mcp"
+    }
+  }
+}
+```
+
+## 第五章：Hooks —— 自动化钩子
+
+Hooks 让 Claude Code 在特定事件时自动执行命令。
+
+### Hook 类型
+
+- **PreCommand** — 命令执行前触发
+- **PostCommand** — 命令执行后触发
+- **Stop** — Claude 停止工作时触发
+- **Notification** — 发送通知时触发
+
+### 实用示例
+
+**任务完成 Mac 通知：**
+```json
+{
+  "hooks": {
+    "Stop": [{
+      "matcher": "",
+      "hooks": [{
+        "type": "command",
+        "command": "osascript -e 'display notification \"任务完成\" with title \"Claude Code\"'",
+        "timeout": 5
+      }]
+    }]
+  }
+}
+```
+
+**提交前自动跑 lint：**
+```json
+{
+  "hooks": {
+    "PreCommand": [{
+      "matcher": "git commit",
+      "hooks": [{
+        "type": "command",
+        "command": "npm run lint",
+        "timeout": 30
+      }]
+    }]
+  }
+}
+```
+
+通过 `/update-config` 可以交互式配置这些 hooks。
+
+## 第六章：高级工作流
+
+### 会话管理
+
+```bash
+# 继续上次对话（保持完整上下文）
+claude --continue
+
+# 恢复特定会话
+claude --resume "重构认证模块"
+
+# 从 PR 恢复关联的会话
+claude --from-pr 42
+
+# 给会话命名（方便后续恢复）
+claude --name "feat-user-auth"
+```
+
+### Worktree 隔离开发
+
+```bash
+# 在隔离的 git worktree 中工作
+claude --worktree fix-login-bug
+
+# 配合 tmux 使用
+claude --worktree fix-login-bug --tmux
+```
+
+适合有风险的重构——不满意就丢弃 worktree，零影响。
+
+### /batch 并行重构
+
+当你需要对整个代码库做大规模修改时：
+
+```
+/batch
+```
+
+它会：
+1. 分析你的需求
+2. 拆分成多个独立子任务
+3. 为每个子任务创建一个 worktree
+4. 并行执行（5-30 个代理同时工作）
+5. 每个完成后创建 PR
+
+适合场景：全局变量重命名、API 版本迁移、代码风格统一。
+
+### 远程控制
+
+```bash
+# 启动远程控制模式
+claude --remote-control my-session
+```
+
+允许外部系统（CI、手机快捷指令等）向 Claude Code 发送指令。
+
+### 成本控制
+
+```bash
+# 限制单次会话最大花费
+claude --print --max-budget-usd 5.00 "重构整个认证模块"
+```
+
+## 第七章：实战案例
+
+### 案例 1：每日自动生成博客
+
+```bash
+# 脚本抓取新闻 → AI 生成文章 → 提交推送 → 发布公众号
+claude --print "运行 auto-post 脚本生成今天的文章，然后 git push"
+```
+
+配合 iPhone 快捷指令 + SSH，手机一键触发。
+
+### 案例 2：PR 审查工作流
+
+```bash
+# 拉取 PR，审查代码，给出建议
+claude --from-pr 123
+> /review
+> 这个 SQL 查询有没有注入风险？
+> /security-review
+```
+
+### 案例 3：全栈功能开发
+
+```
+> 帮我实现用户头像上传功能：
+> 1. 前端：React 组件，支持裁剪
+> 2. 后端：Express 路由，保存到 S3
+> 3. 数据库：migration 添加 avatar_url 字段
+> 4. 写测试
+```
+
+Claude Code 会创建任务列表，逐步实现每个步骤，你确认后继续下一步。
+
+### 案例 4：Debug 复杂问题
+
+```
+> 用户反馈登录后偶尔被踢出，帮我排查
+```
+
+Claude 会：
+1. 分析认证相关代码
+2. 检查 session/token 过期逻辑
+3. 查看日志格式推断触发条件
+4. 定位根因并给出修复方案
+
+### 案例 5：配合 MCP 做全链路操作
+
+```
+> 查一下 Sentry 最近的报错，修复出现最多的那个 bug，然后在 Slack #dev 频道通知团队
+```
+
+这需要同时配置 Sentry MCP、GitHub MCP 和 Slack MCP。
+
+## 第八章：模型选择策略
+
+Claude Code 支持 Claude 4 全系列模型：
+
+| 模型 | 适用场景 | 特点 |
+|------|----------|------|
+| **Opus** | 复杂重构、架构设计、多文件修改 | 最强推理，最贵 |
+| **Sonnet** | 日常开发、功能实现、代码解释 | 性价比之王 |
+| **Haiku** | 简单问答、格式转换、快速查询 | 最快最便宜 |
+
+```bash
+# 简单问题用 Haiku
+claude --model haiku "这个函数的返回类型是什么"
+
+# 日常开发用 Sonnet（默认）
+claude
+
+# 复杂任务用 Opus
+claude --model opus "重新设计这个模块的状态管理架构"
+```
+
+## 总结：我的工作流配方
+
+```
+每天开始：
+  claude --continue                # 接续昨天的上下文
+
+写新功能：
+  描述需求 → Plan Mode → 确认 → 自动实现 → /review
+
+修 Bug：
+  贴报错信息 → Claude 分析 → 定位 → 修复 → 测试
+
+代码审查：
+  claude --from-pr 42 → /review → /security-review
+
+发布前：
+  /security-review → 确认 → git push → /loop 2m "检查 CI 状态"
+
+大重构：
+  /batch → 拆分任务 → 并行执行 → 逐个审查 PR → 合并
+```
+
+Claude Code 的本质不是替代你写代码，而是让你把精力集中在「决策」上——架构怎么设计、方案怎么选、代码该不该这么写。执行层面的事情，让 AI 来。
+
+---
+
+> 本文由 AI 整理生成，基于 Claude Code v2.1 功能特性编写，仅供参考。
