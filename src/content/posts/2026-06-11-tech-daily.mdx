@@ -1,0 +1,471 @@
+---
+title: "MCP 协议完全解析：Model Context Protocol 原理与实战"
+description: "深入理解 MCP（Model Context Protocol）的设计理念、协议架构、Server 开发、Client 集成和生态全景，让 AI 连接万物。"
+category: tech
+tags: ["MCP", "Model Context Protocol", "AI", "协议", "开发者工具"]
+date: 2026-06-11
+draft: false
+cover: "https://images.unsplash.com/photo-1558494949-ef010cbdcc31?w=1200&h=630&fit=crop"
+---
+
+MCP（Model Context Protocol）是 Anthropic 提出的开放协议，目标是为 AI 模型提供一种标准化的方式来连接外部数据源和工具。你可以把它理解为「AI 的 USB 接口」——一个协议，接入万物。
+
+## 第一章：为什么需要 MCP
+
+### 问题：AI 的孤岛困境
+
+没有 MCP 之前，每个 AI 应用要连接外部服务都需要单独开发集成：
+
+```
+┌─────────┐     自定义集成      ┌──────────┐
+│ Claude  │ ◄─────────────────► │ GitHub   │
+│ Code    │ ◄─────────────────► │ Slack    │
+│         │ ◄─────────────────► │ Sentry   │
+│         │ ◄─────────────────► │ Database │
+└─────────┘  N×M 集成问题       └──────────┘
+```
+
+每个 AI 客户端 × 每个服务 = 指数级的集成工作。
+
+### 解决：统一协议
+
+```
+┌─────────┐                     ┌──────────┐
+│ Claude  │                     │ GitHub   │
+│ Code    │ ◄──┐                │ Server   │
+├─────────┤    │    ┌───────┐   ├──────────┤
+│ Cursor  │ ◄──┼──► │  MCP  │ ◄─┤ Slack    │
+├─────────┤    │    │Protocol│   │ Server   │
+│ Codex   │ ◄──┘    └───────┘   ├──────────┤
+├─────────┤                     │ Sentry   │
+│ 任何客户端│                     │ Server   │
+└─────────┘                     └──────────┘
+```
+
+服务只需实现一次 MCP Server，所有支持 MCP 的客户端都能连接。
+
+## 第二章：核心概念
+
+### 三个角色
+
+| 角色 | 说明 | 示例 |
+|------|------|------|
+| **Host** | AI 应用本身 | Claude Code、Cursor、自定义 App |
+| **Client** | Host 内的 MCP 连接器 | 每个 Server 对应一个 Client 实例 |
+| **Server** | 服务提供者 | GitHub Server、数据库 Server |
+
+### 三大能力
+
+MCP Server 可以向 AI 暴露三种类型的能力：
+
+#### 1. Tools（工具）
+
+让 AI 执行操作，类似函数调用：
+
+```json
+{
+  "name": "create_issue",
+  "description": "在 GitHub 仓库创建一个 Issue",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "repo": { "type": "string", "description": "仓库名 owner/repo" },
+      "title": { "type": "string" },
+      "body": { "type": "string" }
+    },
+    "required": ["repo", "title"]
+  }
+}
+```
+
+#### 2. Resources（资源）
+
+让 AI 读取数据，类似 REST 的 GET：
+
+```json
+{
+  "uri": "github://repos/openai/codex/issues",
+  "name": "Codex Issues",
+  "mimeType": "application/json"
+}
+```
+
+#### 3. Prompts（提示模板）
+
+预定义的交互模板：
+
+```json
+{
+  "name": "code_review",
+  "description": "代码审查模板",
+  "arguments": [
+    { "name": "diff", "description": "要审查的 diff 内容" }
+  ]
+}
+```
+
+## 第三章：传输方式
+
+### stdio（本地进程）
+
+最常用的方式。Host 启动一个子进程，通过 stdin/stdout 通信：
+
+```
+Host ──stdin──► Server Process
+Host ◄─stdout── Server Process
+```
+
+**优点**：无网络依赖，启动快，安全  
+**适合**：本地工具，如 Git、文件系统、数据库客户端
+
+```json
+{
+  "mcpServers": {
+    "github": {
+      "command": "npx",
+      "args": ["@modelcontextprotocol/server-github"],
+      "env": { "GITHUB_TOKEN": "${GITHUB_TOKEN}" }
+    }
+  }
+}
+```
+
+### HTTP（Streamable HTTP）
+
+Server 作为远程 HTTP 服务运行：
+
+```
+Host ──HTTP POST──► https://mcp.sentry.dev/mcp
+Host ◄──SSE stream── Server
+```
+
+**优点**：可远程部署，多用户共享  
+**适合**：SaaS 服务，如 Sentry、Stripe、Cloudflare
+
+```json
+{
+  "mcpServers": {
+    "sentry": {
+      "type": "http",
+      "url": "https://mcp.sentry.dev/mcp"
+    }
+  }
+}
+```
+
+## 第四章：开发一个 MCP Server
+
+### 用 TypeScript 实现
+
+安装 SDK：
+
+```bash
+npm install @modelcontextprotocol/sdk
+```
+
+最小示例——一个天气查询 Server：
+
+```typescript
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+
+const server = new McpServer({
+  name: "weather",
+  version: "1.0.0",
+});
+
+// 注册 Tool
+server.tool(
+  "get_weather",
+  "查询指定城市的天气",
+  {
+    city: { type: "string", description: "城市名称" },
+  },
+  async ({ city }) => {
+    const res = await fetch(
+      `https://api.weatherapi.com/v1/current.json?key=YOUR_KEY&q=${city}`
+    );
+    const data = await res.json();
+    return {
+      content: [{
+        type: "text",
+        text: `${city}: ${data.current.condition.text}, ${data.current.temp_c}°C`,
+      }],
+    };
+  }
+);
+
+// 启动
+const transport = new StdioServerTransport();
+await server.connect(transport);
+```
+
+### 用 Python 实现
+
+```python
+from mcp.server import Server
+from mcp.server.stdio import stdio_server
+
+app = Server("weather")
+
+@app.tool()
+async def get_weather(city: str) -> str:
+    """查询指定城市的天气"""
+    import httpx
+    res = await httpx.AsyncClient().get(
+        f"https://api.weatherapi.com/v1/current.json?key=YOUR_KEY&q={city}"
+    )
+    data = res.json()
+    return f"{city}: {data['current']['condition']['text']}, {data['current']['temp_c']}°C"
+
+async def main():
+    async with stdio_server() as (read, write):
+        await app.run(read, write)
+
+if __name__ == "__main__":
+    import asyncio
+    asyncio.run(main())
+```
+
+### 注册到客户端
+
+```json
+{
+  "mcpServers": {
+    "weather": {
+      "command": "node",
+      "args": ["./my-weather-server/index.js"],
+      "env": { "WEATHER_API_KEY": "xxx" }
+    }
+  }
+}
+```
+
+## 第五章：Resource 与 Prompt
+
+### 实现 Resource
+
+```typescript
+server.resource(
+  "project-readme",
+  "file://./README.md",
+  async (uri) => {
+    const content = readFileSync("./README.md", "utf-8");
+    return {
+      contents: [{
+        uri: uri.href,
+        mimeType: "text/markdown",
+        text: content,
+      }],
+    };
+  }
+);
+```
+
+### 实现动态 Resource 列表
+
+```typescript
+server.resource(
+  "db-tables",
+  "postgres://tables/*",
+  async (uri) => {
+    const tableName = uri.pathname.split("/").pop();
+    const schema = await db.getTableSchema(tableName);
+    return {
+      contents: [{
+        uri: uri.href,
+        mimeType: "application/json",
+        text: JSON.stringify(schema),
+      }],
+    };
+  }
+);
+```
+
+### 实现 Prompt 模板
+
+```typescript
+server.prompt(
+  "sql_review",
+  "审查 SQL 查询的性能和安全性",
+  { query: { type: "string", description: "SQL 查询语句" } },
+  async ({ query }) => ({
+    messages: [{
+      role: "user",
+      content: {
+        type: "text",
+        text: `请审查以下 SQL 查询，关注：
+1. 是否有 SQL 注入风险
+2. 是否缺少索引
+3. 是否有 N+1 问题
+4. 性能优化建议
+
+SQL: ${query}`,
+      },
+    }],
+  })
+);
+```
+
+## 第六章：热门 MCP Server 生态
+
+### 官方维护
+
+| Server | 功能 | 安装 |
+|--------|------|------|
+| **filesystem** | 文件读写操作 | `@modelcontextprotocol/server-filesystem` |
+| **github** | 仓库/PR/Issue | `@modelcontextprotocol/server-github` |
+| **postgres** | PostgreSQL 查询 | `@modelcontextprotocol/server-postgres` |
+| **puppeteer** | 浏览器自动化 | `@modelcontextprotocol/server-puppeteer` |
+| **memory** | 知识图谱存储 | `@modelcontextprotocol/server-memory` |
+
+### 社区热门
+
+| Server | 功能 | 亮点 |
+|--------|------|------|
+| **Sentry** | 错误追踪 | 远程 HTTP，直接用 |
+| **Stripe** | 支付操作 | 官方维护 |
+| **Cloudflare** | Workers/R2/D1 | 基础设施管理 |
+| **Linear** | 项目管理 | Issue/Project 操作 |
+| **Notion** | 文档管理 | 页面读写 |
+| **Slack** | 团队通信 | 消息/频道操作 |
+
+### 发现更多
+
+- [MCP Server 官方列表](https://github.com/modelcontextprotocol/servers)
+- [mcp.so](https://mcp.so) — 社区索引站
+
+## 第七章：安全与权限
+
+### 客户端侧控制
+
+Claude Code 的权限控制方式：
+
+```json
+{
+  "permissions": {
+    "allow": [
+      "mcp__github__create_issue",
+      "mcp__github__list_repos"
+    ],
+    "deny": [
+      "mcp__github__delete_repo"
+    ]
+  }
+}
+```
+
+### Server 侧最佳实践
+
+1. **最小权限** — 只暴露必要的 Tool
+2. **输入校验** — 用 JSON Schema 严格定义参数
+3. **审计日志** — 记录所有 Tool 调用
+4. **速率限制** — 防止 AI 循环调用
+5. **敏感操作确认** — 删除/发布等操作要求二次确认
+
+```typescript
+server.tool(
+  "delete_item",
+  "删除项目（危险操作）",
+  { id: { type: "string" }, confirm: { type: "boolean" } },
+  async ({ id, confirm }) => {
+    if (!confirm) {
+      return {
+        content: [{ type: "text", text: "请确认删除操作：设置 confirm=true" }],
+      };
+    }
+    await db.delete(id);
+    return { content: [{ type: "text", text: `已删除 ${id}` }] };
+  }
+);
+```
+
+## 第八章：调试与测试
+
+### MCP Inspector
+
+官方提供的调试工具：
+
+```bash
+npx @modelcontextprotocol/inspector node ./my-server/index.js
+```
+
+打开浏览器界面，可以：
+- 查看 Server 暴露的所有 Tools/Resources/Prompts
+- 手动调用 Tool 测试返回值
+- 查看完整的 JSON-RPC 通信日志
+
+### 单元测试
+
+```typescript
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
+
+test("get_weather returns formatted result", async () => {
+  const server = createWeatherServer();
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+
+  await server.connect(serverTransport);
+
+  // 模拟 Tool 调用
+  const result = await clientTransport.callTool("get_weather", { city: "Beijing" });
+  expect(result.content[0].text).toContain("Beijing");
+});
+```
+
+## 第九章：进阶模式
+
+### 组合多个 Server
+
+一个客户端可以同时连接多个 Server，AI 自动选择合适的工具：
+
+```json
+{
+  "mcpServers": {
+    "github": { "command": "npx", "args": ["@mcp/server-github"] },
+    "postgres": { "command": "npx", "args": ["@mcp/server-postgres"] },
+    "slack": { "command": "npx", "args": ["@mcp/server-slack"] }
+  }
+}
+```
+
+然后对 AI 说：
+
+```
+> 查看最近的 Sentry 报错，找到对应的代码修复它，
+> 然后在 Slack #dev 频道通知团队
+```
+
+AI 会自动调用多个 Server 的 Tool 来完成跨服务工作流。
+
+### 动态 Tool 注册
+
+Server 可以根据条件动态暴露不同的 Tool：
+
+```typescript
+server.tool(
+  "admin_panel",
+  "管理面板操作",
+  { action: { type: "string" } },
+  async ({ action }, { meta }) => {
+    if (!isAdmin(meta.caller)) {
+      return { content: [{ type: "text", text: "权限不足" }] };
+    }
+    // 执行管理操作
+  }
+);
+```
+
+## 总结
+
+MCP 的本质是一个标准化契约：
+
+- **对 Server 开发者**：只需实现一次，所有客户端都能用
+- **对 Client 开发者**：只需对接协议，所有 Server 都能连
+- **对用户**：AI 能力随着 Server 生态的增长而增长
+
+它正在快速成为 AI 工具生态的「HTTP 协议」——不是最花哨的技术，但可能是最重要的基础设施。
+
+---
+
+> 本文由 AI 整理生成，基于 MCP 协议规范和官方文档编写，仅供参考。协议仍在快速演进中，以官方最新文档为准。

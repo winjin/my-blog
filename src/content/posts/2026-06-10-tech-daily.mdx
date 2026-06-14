@@ -1,0 +1,327 @@
+---
+title: "Cursor IDE 深度指南：AI 编辑器从入门到精通"
+description: "全面解析 Cursor IDE 的核心功能，涵盖 Tab 补全、Composer、Agent 模式、Rules 配置和高级工作流，助你最大化 AI 编程效率。"
+category: tech
+tags: ["Cursor", "AI编程", "IDE", "开发者工具", "代码补全"]
+date: 2026-06-10
+draft: false
+cover: "https://images.unsplash.com/photo-1461749280684-dccba630e2f6?w=1200&h=630&fit=crop"
+---
+
+Cursor 是一个基于 VS Code 的 AI-native 编辑器，内置了代码补全、对话、重构等 AI 能力。它不是 VS Code 的插件，而是一个完整的 fork，深度集成了 AI 到编辑体验的每个环节。
+
+## 第一章：快速上手
+
+### 安装与迁移
+
+从 [cursor.com](https://cursor.com) 下载安装后，首次启动会引导你：
+
+1. **一键导入 VS Code 配置** — 扩展、主题、快捷键全部迁移
+2. **登录账号** — 免费版有限额，Pro 无限使用
+3. **选择 AI 模型** — 可选 Claude Sonnet、GPT-4o 等
+
+迁移后你的 VS Code 扩展、配置全部保留，零学习成本上手。
+
+### 三大核心功能
+
+| 功能 | 触发方式 | 作用 |
+|------|----------|------|
+| **Tab** | 自动弹出 | 智能代码补全（多行预测） |
+| **Cmd+K** | 快捷键 | 行内编辑（选中代码后描述修改） |
+| **Cmd+L** | 快捷键 | 打开 Chat 面板对话 |
+
+## 第二章：Tab 补全 —— 最高频的能力
+
+### 不只是自动补全
+
+Cursor Tab 不是简单的 Copilot 式单行补全，它能：
+
+- **多行预测** — 写完函数签名，自动补全整个函数体
+- **跨文件上下文** — 参考你打开的其他文件推断类型和模式
+- **编辑预测** — 你改了一处，它预测你接下来要改的相关位置
+
+```typescript
+// 你写下函数签名：
+function validateEmail(email: string): boolean {
+// Tab 自动补全整个实现：
+  const regex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  return regex.test(email);
+}
+```
+
+### 技巧：让 Tab 更准
+
+1. **写好注释** — 在函数上方写一行注释，Tab 补全质量显著提升
+2. **打开相关文件** — Cursor 会参考当前打开的文件作为上下文
+3. **保持命名一致** — 变量名/函数名越规范，补全越精准
+
+## 第三章：Cmd+K —— 行内编辑
+
+### 基础用法
+
+选中一段代码，按 `Cmd+K`，输入你想怎么改：
+
+```
+选中一个函数 → Cmd+K → "添加错误处理和输入校验"
+选中 CSS → Cmd+K → "改成响应式布局，移动端单列"
+选中 SQL → Cmd+K → "优化这个查询，添加索引提示"
+```
+
+Cursor 会显示 diff 预览，你确认后应用修改。
+
+### 进阶：不选中代码
+
+不选中任何代码，直接 `Cmd+K`：
+
+```
+Cmd+K → "在这里添加一个 loading 状态的处理"
+```
+
+Cursor 会在光标位置生成代码。
+
+## 第四章：Chat 与 Composer
+
+### Chat（Cmd+L）
+
+侧边栏聊天，适合问答和探索：
+
+```
+> 这个 useEffect 为什么会无限循环？
+> 帮我解释 src/auth/middleware.ts 的逻辑
+> 这个组件性能有什么问题？
+```
+
+### Composer（Cmd+Shift+I）
+
+Composer 是 Cursor 的杀手级功能——**跨文件编辑**：
+
+```
+> 给用户模块添加邮箱验证功能：
+> 1. 在 user.model.ts 添加 emailVerified 字段
+> 2. 在 auth.service.ts 添加发送验证邮件的方法
+> 3. 在 auth.controller.ts 添加验证接口
+> 4. 更新相关测试
+```
+
+Composer 会同时修改多个文件，每个改动展示 diff，你逐一确认或一键全部接受。
+
+### Agent 模式
+
+Agent 模式是 Composer 的增强版，能自主执行命令：
+
+- 运行终端命令（安装依赖、跑测试）
+- 读取错误输出并自动修复
+- 多轮迭代直到任务完成
+
+```
+> 帮我搭建一个 Express + TypeScript 项目，配置好 ESLint、Prettier、Vitest
+```
+
+Agent 会自己 `npm init`、安装依赖、创建配置文件、写示例代码。
+
+## 第五章：上下文管理 —— @ 符号
+
+Chat 和 Composer 中用 `@` 引用上下文：
+
+| 引用 | 作用 |
+|------|------|
+| `@file` | 引用指定文件 |
+| `@folder` | 引用整个文件夹 |
+| `@code` | 引用选中的代码片段 |
+| `@docs` | 引用官方文档（预索引） |
+| `@web` | 搜索网络获取信息 |
+| `@git` | 引用 Git 历史/diff |
+| `@codebase` | 搜索整个代码库 |
+
+### 实战组合
+
+```
+@auth.service.ts @user.model.ts 这两个文件的用户验证逻辑有没有安全问题？
+
+@codebase 项目里哪些地方用了 deprecated 的 findOne API？
+
+@docs React 19 的 use hook 怎么用？帮我把 @data-fetcher.ts 改成用 use
+```
+
+## 第六章：Rules —— 项目级指令
+
+### .cursorrules 文件
+
+在项目根目录创建 `.cursorrules`（或 `.cursor/rules`），定义 AI 行为规范：
+
+```markdown
+# Project Rules
+
+## 代码风格
+- 使用 TypeScript strict 模式
+- 函数优先于类
+- 使用 named export，不用 default export
+- 错误处理使用 Result<T, E> 模式
+
+## 架构约束
+- API 路由放在 src/routes/ 下
+- 业务逻辑放在 src/services/ 下
+- 数据库操作封装在 src/repositories/ 下
+- 禁止在 controller 中直接操作数据库
+
+## 测试要求
+- 每个 service 必须有对应的单元测试
+- 测试文件使用 .test.ts 后缀
+- Mock 外部依赖，不 mock 内部模块
+
+## 命名规范
+- 文件名：kebab-case
+- 类型/接口：PascalCase
+- 函数/变量：camelCase
+- 常量：UPPER_SNAKE_CASE
+```
+
+### 条件规则
+
+可以针对特定文件类型设置规则：
+
+```markdown
+## 针对 React 组件
+当编辑 .tsx 文件时：
+- 使用函数组件 + hooks
+- Props 定义用 interface 不用 type
+- 组件文件名使用 PascalCase
+
+## 针对测试文件
+当编辑 .test.ts 文件时：
+- 使用 describe/it 结构
+- 每个 test 只断言一个行为
+- 使用 arrange-act-assert 模式
+```
+
+## 第七章：进阶技巧
+
+### 1. Docs 索引
+
+把常用文档加入 Cursor 索引：
+
+Settings → Features → Docs → Add
+
+```
+@docs Next.js — 官方文档
+@docs Prisma — ORM 文档
+@docs Tailwind — CSS 框架文档
+```
+
+之后在 Chat 里用 `@docs` 引用，AI 回答基于最新文档。
+
+### 2. 忽略文件
+
+`.cursorignore` 文件控制 AI 不索引/不修改的内容：
+
+```
+# 不让 AI 读取敏感文件
+.env*
+secrets/
+credentials/
+
+# 不索引大型生成文件
+dist/
+node_modules/
+*.min.js
+```
+
+### 3. 快捷键优化
+
+| 操作 | 快捷键 | 场景 |
+|------|--------|------|
+| 接受补全 | `Tab` | 日常编码 |
+| 拒绝补全 | `Esc` | 不需要时 |
+| 行内编辑 | `Cmd+K` | 快速修改 |
+| Chat | `Cmd+L` | 提问 |
+| Composer | `Cmd+Shift+I` | 跨文件编辑 |
+| 接受全部 | `Cmd+Enter` | Composer 中 |
+| 引用选中 | `Cmd+Shift+L` | 把选中代码发到 Chat |
+
+### 4. 模型选择
+
+| 模型 | 速度 | 能力 | 适合 |
+|------|------|------|------|
+| **claude-sonnet-4-6** | 快 | 强 | 日常开发（推荐） |
+| **gpt-4o** | 快 | 强 | 通用任务 |
+| **claude-opus-4** | 慢 | 最强 | 复杂重构 |
+| **cursor-small** | 最快 | 一般 | Tab 补全 |
+
+## 第八章：实战工作流
+
+### 场景 1：从零搭建项目
+
+```
+Composer(Agent模式):
+> 搭建一个 Next.js 14 项目：
+> - App Router + TypeScript
+> - Tailwind CSS + shadcn/ui
+> - Prisma + PostgreSQL
+> - NextAuth.js 认证
+> - 创建基础布局和登录页
+```
+
+### 场景 2：理解陌生代码
+
+```
+Chat:
+> @codebase 这个项目的整体架构是什么？画一个模块关系图
+> @src/core/engine.ts 这个文件的核心逻辑是什么？有哪些关键路径？
+```
+
+### 场景 3：重构遗留代码
+
+```
+Composer:
+> @src/legacy/userManager.js 把这个 Class 重构为：
+> 1. 拆分成独立的函数模块
+> 2. 添加 TypeScript 类型
+> 3. 用 Result 模式替代 try-catch
+> 4. 保持所有现有测试通过
+```
+
+### 场景 4：Debug
+
+```
+Chat:
+> 这是报错信息：
+> TypeError: Cannot read properties of undefined (reading 'map')
+> at UserList (src/components/UserList.tsx:24:18)
+>
+> @UserList.tsx 帮我找到原因并修复
+```
+
+## 第九章：Cursor vs 其他工具
+
+| 维度 | Cursor | VS Code + Copilot | Claude Code |
+|------|--------|-------------------|-------------|
+| **形态** | IDE | IDE + 插件 | CLI |
+| **多文件编辑** | Composer 原生支持 | 有限 | Agent 自主操作 |
+| **终端集成** | Agent 可执行命令 | Copilot Chat | 完全终端体验 |
+| **上下文** | @引用 + 自动索引 | 打开文件 | 自动分析 |
+| **自定义规则** | .cursorrules | 有限 | CLAUDE.md |
+| **适合** | 日常编码 + 重构 | 轻度 AI 辅助 | 自动化 + 大任务 |
+
+### 我的搭配方案
+
+```
+日常写代码 → Cursor（Tab + Cmd+K 行云流水）
+大规模重构 → Claude Code（Agent 自主多步操作）
+代码审查   → Claude Code /review
+快速原型   → Cursor Composer Agent 模式
+```
+
+## 总结
+
+Cursor 的核心价值是把 AI 嵌入到了编辑的每一个细节：
+
+- **Tab** 让你几乎不需要手打代码
+- **Cmd+K** 让修改变成「说一句话」
+- **Composer** 让跨文件重构变成「描述目标」
+- **Agent** 让搭建项目变成「一句需求」
+
+关键不是记住所有功能，而是养成习惯：**写代码前先想「这个能不能让 AI 做」**。大多数时候，答案是能。
+
+---
+
+> 本文由 AI 整理生成，基于 Cursor IDE 最新版本功能编写，仅供参考。
