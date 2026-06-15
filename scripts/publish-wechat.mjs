@@ -9,12 +9,25 @@
  *   node scripts/publish-wechat.mjs --all
  */
 
-import { readFileSync, readdirSync } from 'fs';
+import { readFileSync, readdirSync, existsSync } from 'fs';
 import { join, dirname, basename } from 'path';
 import { fileURLToPath } from 'url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(__dirname, '..');
+
+// Node's bundled CA roots can't verify the WeChat API cert chain (DigiCert
+// intermediate missing), so reuse the system bundle that curl trusts. This var
+// must be set before TLS init, so re-exec ourselves with it if absent.
+const SYSTEM_CA = '/etc/ssl/cert.pem';
+if (!process.env.NODE_EXTRA_CA_CERTS && existsSync(SYSTEM_CA)) {
+  const { spawnSync } = await import('child_process');
+  const { status } = spawnSync(process.execPath, [fileURLToPath(import.meta.url), ...process.argv.slice(2)], {
+    stdio: 'inherit',
+    env: { ...process.env, NODE_EXTRA_CA_CERTS: SYSTEM_CA },
+  });
+  process.exit(status ?? 0);
+}
 
 // Load .env
 const envContent = readFileSync(join(ROOT, '.env'), 'utf-8');
