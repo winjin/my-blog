@@ -36,4 +36,13 @@ git add src/content/posts/
 git commit -m "auto: daily tech post $(date +%Y-%m-%d)"
 git push
 
-echo "Done! Post pushed to remote."
+echo "Post pushed to remote."
+
+# 推送到微信公众号草稿箱
+POST_FILE="src/content/posts/$(date +%Y-%m-%d)-tech-daily.mdx"
+if [ -f "$POST_FILE" ]; then
+  echo "Publishing to WeChat draft..."
+  node scripts/publish-wechat.mjs "$POST_FILE"
+fi
+
+echo "Done!"
