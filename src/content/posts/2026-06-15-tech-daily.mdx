@@ -1,0 +1,487 @@
+---
+title: "Supabase + Vercel 全栈实战：从零搭建一个现代 Web 应用"
+description: "由浅入深讲解 Supabase 与 Vercel 的基础概念与实战用法，涵盖数据库、认证、存储、行级安全、Serverless 部署，并手把手搭建一个 Next.js 全栈应用。"
+category: tech
+tags: ["Supabase", "Vercel", "全栈开发", "Next.js", "PostgreSQL", "Serverless"]
+date: 2026-06-15
+draft: false
+cover: "https://images.unsplash.com/photo-1544383835-bda2bc66a55d?w=1200&h=630&fit=crop"
+---
+
+如果说过去搭一个全栈应用要折腾服务器、数据库、运维一整套，那么今天的 **Supabase + Vercel** 组合把这件事简化到了「写代码 + git push」。Vercel 负责把你的前端和 API 秒级部署到全球边缘节点，Supabase 负责提供数据库、认证、存储等后端能力——两者都有慷慨的免费额度，是个人项目和初创团队的黄金搭档。
+
+这篇文章会先分别讲清楚它们「是什么、怎么用」，再把它们组合起来做一个真实的全栈应用。
+
+## 第一章：先理解它们各自解决什么问题
+
+一个 Web 应用通常需要这几块：
+
+```
+┌─────────────┐    ┌──────────────┐    ┌─────────────┐
+│   前端页面   │ →  │   后端 API   │ →  │   数据库     │
+│  (UI/交互)   │    │ (业务逻辑)    │    │  (存数据)    │
+└─────────────┘    └──────────────┘    └─────────────┘
+      用户认证、文件存储、实时推送……
+```
+
+传统做法你要自己买服务器、装数据库、配 Nginx、搞 CI/CD。而：
+
+- **Vercel** 接管「前端 + 后端 API 的托管和部署」——你 push 代码，它自动构建、部署到全球 CDN。
+- **Supabase** 接管「数据库 + 认证 + 存储 + 实时」——开箱即用，不用自己运维 PostgreSQL。
+
+它俩定位互补，所以经常一起出现。
+
+## 第二章：Vercel 入门
+
+### 它是什么
+
+Vercel 是一个**前端云平台**，由 Next.js 背后的团队打造。核心能力：
+
+- **零配置部署**：连接 Git 仓库，每次 push 自动部署。
+- **预览部署（Preview）**：每个 PR/分支都生成一个独立的预览链接。
+- **Serverless / Edge Functions**：把后端逻辑作为函数部署，按需运行，无需管理服务器。
+- **全球 CDN**：静态资源自动分发到边缘节点，访问快。
+
+它支持几乎所有主流框架：Next.js、Astro、Vite、Nuxt、SvelteKit 等。
+
+### 最快的上手方式
+
+**方式一：命令行**
+
+```bash
+# 安装 CLI
+npm install -g vercel
+
+# 在项目目录下
+vercel login        # 登录
+vercel              # 部署到预览环境
+vercel --prod       # 部署到生产环境
+```
+
+**方式二：网页（更推荐新手）**
+
+1. 把代码推到 GitHub。
+2. 打开 [vercel.com](https://vercel.com)，点 "Add New → Project"。
+3. 选择你的仓库，Vercel 自动识别框架并配置构建命令。
+4. 点 Deploy，几十秒后拿到一个 `https://你的项目.vercel.app` 地址。
+
+之后**每次 `git push` 都会自动重新部署**，这就是它最爽的地方。
+
+### 核心概念：三种部署环境
+
+| 环境 | 触发方式 | 用途 |
+|------|----------|------|
+| **Production** | push 到主分支 | 正式线上环境 |
+| **Preview** | push 到其他分支 / 开 PR | 每个分支独立预览，方便 review |
+| **Development** | 本地 `vercel dev` | 本地模拟生产环境 |
+
+### 环境变量
+
+敏感配置（如数据库密钥）绝对不要写进代码，用环境变量：
+
+```bash
+# 命令行添加
+vercel env add SUPABASE_URL
+vercel env add SUPABASE_ANON_KEY
+
+# 拉取到本地 .env.local
+vercel env pull .env.local
+```
+
+也可以在网页后台 `Settings → Environment Variables` 里配置，并区分 Production / Preview / Development 三套。
+
+### Serverless Functions 简介
+
+在 Next.js 项目里，`app/api/` 下的文件会自动变成后端接口：
+
+```ts
+// app/api/hello/route.ts
+export async function GET() {
+  return Response.json({ message: "Hello from Vercel!" });
+}
+```
+
+部署后访问 `/api/hello` 就能调用。它运行在 Serverless 环境里——有请求才启动，没请求不计费。
+
+## 第三章：Supabase 入门
+
+### 它是什么
+
+Supabase 常被称为「**开源版 Firebase**」，但底层是大家熟悉的 **PostgreSQL**。它把后端常用能力打包成一套服务：
+
+| 模块 | 作用 |
+|------|------|
+| **Database** | 托管的 PostgreSQL，带可视化表格编辑器 |
+| **Auth** | 用户认证（邮箱、OAuth、手机号、Magic Link） |
+| **Storage** | 文件/图片存储，类似 S3 |
+| **Realtime** | 数据库变更实时推送到客户端 |
+| **Edge Functions** | 部署 Deno 编写的 Serverless 函数 |
+| **Auto API** | 建好表后自动生成 REST 和 GraphQL 接口 |
+
+最大的特点：**建一张表，API 就自动有了**，不用手写一堆 CRUD 接口。
+
+### 创建第一个项目
+
+1. 打开 [supabase.com](https://supabase.com)，注册并 New Project。
+2. 设置项目名、数据库密码、区域（选离用户近的，比如新加坡）。
+3. 等待 1~2 分钟，项目初始化完成。
+
+进入项目后，在 `Settings → API` 里能找到两个关键信息：
+
+```bash
+SUPABASE_URL=https://xxxxx.supabase.co
+SUPABASE_ANON_KEY=eyJhbGci...   # 公开密钥，可暴露给前端
+SUPABASE_SERVICE_ROLE_KEY=...   # 服务端密钥，绝不能暴露！
+```
+
+### 建一张表
+
+在 `Table Editor` 里点 "New Table"，或者直接用 SQL Editor 写：
+
+```sql
+create table todos (
+  id bigint generated always as identity primary key,
+  user_id uuid references auth.users not null,
+  title text not null,
+  completed boolean default false,
+  created_at timestamptz default now()
+);
+```
+
+### 用 SDK 操作数据
+
+安装客户端：
+
+```bash
+npm install @supabase/supabase-js
+```
+
+初始化并增删改查：
+
+```ts
+import { createClient } from "@supabase/supabase-js";
+
+const supabase = createClient(
+  process.env.SUPABASE_URL!,
+  process.env.SUPABASE_ANON_KEY!
+);
+
+// 查询
+const { data, error } = await supabase
+  .from("todos")
+  .select("*")
+  .eq("completed", false)
+  .order("created_at", { ascending: false });
+
+// 插入
+await supabase.from("todos").insert({ title: "学习 Supabase" });
+
+// 更新
+await supabase.from("todos").update({ completed: true }).eq("id", 1);
+
+// 删除
+await supabase.from("todos").delete().eq("id", 1);
+```
+
+链式 API 直观，几乎不用写 SQL 就能完成大部分操作。
+
+### 用户认证
+
+```ts
+// 注册
+await supabase.auth.signUp({
+  email: "user@example.com",
+  password: "secure-password",
+});
+
+// 登录
+await supabase.auth.signInWithPassword({
+  email: "user@example.com",
+  password: "secure-password",
+});
+
+// 第三方登录（GitHub / Google 等）
+await supabase.auth.signInWithOAuth({ provider: "github" });
+
+// 获取当前用户
+const { data: { user } } = await supabase.auth.getUser();
+
+// 登出
+await supabase.auth.signOut();
+```
+
+## 第四章：行级安全（RLS）—— 最重要也最容易踩坑的概念
+
+这是 Supabase 必须理解的核心，否则你的数据库就是**裸奔**的。
+
+因为 Supabase 把数据库直接「暴露」给前端调用，光靠 `anon key` 谁都能访问。安全的关键在于 **RLS（Row Level Security，行级安全策略）**——它在数据库层面规定「谁能看/改哪些行」。
+
+```sql
+-- 1. 开启行级安全（开启后默认拒绝一切访问）
+alter table todos enable row level security;
+
+-- 2. 策略：用户只能查看自己的 todo
+create policy "用户读取自己的数据"
+on todos for select
+using (auth.uid() = user_id);
+
+-- 3. 策略：用户只能插入归属自己的 todo
+create policy "用户插入自己的数据"
+on todos for insert
+with check (auth.uid() = user_id);
+
+-- 4. 策略：用户只能更新/删除自己的 todo
+create policy "用户修改自己的数据"
+on todos for update using (auth.uid() = user_id);
+
+create policy "用户删除自己的数据"
+on todos for delete using (auth.uid() = user_id);
+```
+
+关键点：
+
+- `auth.uid()` 是当前登录用户的 ID，由 Supabase 从请求的 JWT 中解析。
+- `using` 控制「能看到哪些行」，`with check` 控制「能写入哪些行」。
+- **开启 RLS 后如果不写任何策略，等于全部禁止访问**——很多新手卡在「为什么查不到数据」，就是忘了加策略。
+
+> 经验法则：任何会被前端用 `anon key` 访问的表，都必须开启 RLS 并写好策略。需要绕过策略的后台操作，才用 `service_role key`（仅在服务端使用）。
+
+## 第五章：实战 —— Next.js + Supabase + Vercel 全栈应用
+
+下面把三者串起来，做一个带登录的 Todo 应用。
+
+### 1. 创建项目并安装依赖
+
+```bash
+npx create-next-app@latest my-todo-app
+cd my-todo-app
+npm install @supabase/supabase-js @supabase/ssr
+```
+
+### 2. 配置环境变量
+
+```bash
+# .env.local
+NEXT_PUBLIC_SUPABASE_URL=https://xxxxx.supabase.co
+NEXT_PUBLIC_SUPABASE_ANON_KEY=eyJhbGci...
+```
+
+> 注意 `NEXT_PUBLIC_` 前缀：这样的变量会被打包进前端，所以**只放可公开的 anon key**，服务端密钥绝不能加这个前缀。
+
+### 3. 封装 Supabase 客户端
+
+```ts
+// lib/supabase/client.ts —— 浏览器端
+import { createBrowserClient } from "@supabase/ssr";
+
+export const createClient = () =>
+  createBrowserClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+  );
+```
+
+```ts
+// lib/supabase/server.ts —— 服务端（读取 cookie 中的会话）
+import { createServerClient } from "@supabase/ssr";
+import { cookies } from "next/headers";
+
+export async function createClient() {
+  const cookieStore = await cookies();
+  return createServerClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    {
+      cookies: {
+        getAll: () => cookieStore.getAll(),
+        setAll: (list) =>
+          list.forEach(({ name, value, options }) =>
+            cookieStore.set(name, value, options)
+          ),
+      },
+    }
+  );
+}
+```
+
+### 4. 服务端读取数据（Server Component）
+
+```tsx
+// app/page.tsx
+import { createClient } from "@/lib/supabase/server";
+
+export default async function Home() {
+  const supabase = await createClient();
+  const { data: todos } = await supabase.from("todos").select("*");
+
+  return (
+    <ul>
+      {todos?.map((t) => (
+        <li key={t.id}>{t.title}</li>
+      ))}
+    </ul>
+  );
+}
+```
+
+因为有 RLS，这里查出来的天然只有「当前登录用户」的数据，无需手动加 `where user_id = ...`。
+
+### 5. 客户端交互（添加 Todo）
+
+```tsx
+"use client";
+import { useState } from "react";
+import { createClient } from "@/lib/supabase/client";
+
+export default function AddTodo() {
+  const [title, setTitle] = useState("");
+  const supabase = createClient();
+
+  async function add() {
+    const { data: { user } } = await supabase.auth.getUser();
+    await supabase.from("todos").insert({ title, user_id: user!.id });
+    setTitle("");
+  }
+
+  return (
+    <div>
+      <input value={title} onChange={(e) => setTitle(e.target.value)} />
+      <button onClick={add}>添加</button>
+    </div>
+  );
+}
+```
+
+### 6. 部署到 Vercel
+
+```bash
+git init && git add . && git commit -m "init"
+# 推到 GitHub，然后在 Vercel 导入仓库
+```
+
+在 Vercel 后台 `Settings → Environment Variables` 里填上和 `.env.local` 一样的两个变量，点 Deploy。完成后线上就跑起来了——以后改代码 push 即自动更新。
+
+## 第六章：进阶能力
+
+### 实时订阅（Realtime）
+
+数据库变化自动推送到前端，做协作/聊天类应用很方便：
+
+```ts
+supabase
+  .channel("todos-changes")
+  .on(
+    "postgres_changes",
+    { event: "*", schema: "public", table: "todos" },
+    (payload) => {
+      console.log("数据变了：", payload);
+    }
+  )
+  .subscribe();
+```
+
+### 文件存储（Storage）
+
+```ts
+// 上传头像
+await supabase.storage
+  .from("avatars")
+  .upload(`${userId}/avatar.png`, file);
+
+// 获取公开访问 URL
+const { data } = supabase.storage
+  .from("avatars")
+  .getPublicUrl(`${userId}/avatar.png`);
+```
+
+### Edge Functions（自定义后端逻辑）
+
+需要复杂业务逻辑、或调用第三方 API 又要隐藏密钥时使用：
+
+```bash
+supabase functions new send-email
+supabase functions deploy send-email
+```
+
+```ts
+// supabase/functions/send-email/index.ts
+Deno.serve(async (req) => {
+  const { to } = await req.json();
+  // ...调用邮件服务，密钥保存在服务端
+  return new Response(JSON.stringify({ ok: true }));
+});
+```
+
+### 数据库迁移（团队协作必备）
+
+不要只在网页里点点改表结构，用迁移文件把 schema 纳入版本控制：
+
+```bash
+supabase init               # 初始化本地配置
+supabase migration new add_todos   # 生成迁移文件
+# 编辑 supabase/migrations/xxx_add_todos.sql
+supabase db push            # 应用到远程数据库
+```
+
+## 第七章：定价与额度（免费层够用吗？）
+
+| | Vercel 免费层 | Supabase 免费层 |
+|---|---|---|
+| 价格 | $0（Hobby） | $0（Free） |
+| 关键限制 | 100GB 带宽/月，仅限个人非商用 | 500MB 数据库、1GB 存储、5 万月活用户 |
+| 休眠 | 无 | 项目 7 天无活动会暂停（手动唤醒即可） |
+| 升级 | Pro $20/月 | Pro $25/月 |
+
+**对个人项目、demo、小流量产品，免费层完全够用。** 真正上量后再按需升级。
+
+## 第八章：最佳实践与避坑
+
+### 1. 永远开启 RLS
+
+```sql
+-- 新建任何业务表后第一件事
+alter table your_table enable row level security;
+```
+
+忘记这一步 = 数据库裸奔，这是 Supabase 最常见的安全事故。
+
+### 2. 区分两种密钥
+
+| 密钥 | 能否暴露 | 用在哪 |
+|------|----------|--------|
+| `anon key` | ✅ 可放前端 | 浏览器、客户端，受 RLS 约束 |
+| `service_role key` | ❌ 绝不暴露 | 仅服务端，绕过 RLS |
+
+### 3. 用环境变量管理配置
+
+本地 `.env.local`、Vercel 后台、Supabase 各处的密钥要一致，且 `.env.local` 必须加进 `.gitignore`。
+
+### 4. 善用预览部署做 Review
+
+每个 PR 自动生成预览链接，团队成员点开就能看到效果，比口头描述靠谱得多。
+
+### 5. schema 变更走迁移文件
+
+避免「网页点改了表，但代码和团队都不知道」的混乱，用 `supabase migration` 纳入 Git。
+
+## 总结
+
+```
+Vercel  = 部署/托管层（前端 + Serverless API + 全球 CDN）
+Supabase = 后端能力层（数据库 + 认证 + 存储 + 实时）
+
+典型工作流：
+  写 Next.js 代码
+    → 前端 + API 用 Supabase SDK 读写数据
+    → RLS 在数据库层把好安全关
+    → git push 触发 Vercel 自动部署
+    → 拿到线上地址，持续迭代
+```
+
+这套组合的本质是「**把运维交给平台，把精力留给产品**」。你不用碰服务器、不用配数据库主从、不用手写 CI/CD，免费额度就能跑起一个完整的全栈应用。对独立开发者和小团队来说，这是目前性价比极高的现代 Web 技术栈。
+
+如果你正打算做一个 side project，强烈建议从 Supabase + Vercel 开始——上手快，能让你专注在真正重要的事：把产品做出来。
+
+---
+
+> 本文由 AI 整理生成，相关功能与定价以官方文档为准：[Vercel 文档](https://vercel.com/docs) / [Supabase 文档](https://supabase.com/docs)。
