@@ -1,0 +1,377 @@
+---
+title: "Loop Engineering 入门：AI Agent 时代真正的核心技能"
+description: "由浅入深讲解 Loop Engineering（循环工程）：从 prompt engineering 的演进、agentic loop 的本质，到停止条件、错误反馈、上下文管理，并用可运行的代码实例手把手构建一个会自我修正的 Agent 循环。"
+category: tech
+tags: ["Loop Engineering", "AI Agent", "ReAct", "LLM", "Agentic", "大模型应用"]
+date: 2026-06-17
+draft: false
+cover: "https://images.unsplash.com/photo-1620712943543-bcc4688e7485?w=1200&h=630&fit=crop"
+---
+
+如果说 2023 年大家在卷 **Prompt Engineering**（怎么写好一句提示词），2024 年在卷 **Context Engineering**（怎么给模型喂对上下文），那么到了 Agent 真正落地的今天，决定一个 AI 应用好坏的，越来越是 **Loop Engineering（循环工程）**——你怎么设计模型「行动→观察→再行动」的这个循环。
+
+这篇文章会从最基础的概念讲起，一步步带你理解什么是 loop，为什么它比单次 prompt 重要得多，并用可运行的代码亲手写一个会自我修正的 Agent。
+
+## 第一章：从单次问答到循环
+
+### 普通的 LLM 调用：一问一答
+
+最朴素的用法是「问一句，答一句」：
+
+```python
+response = llm.chat("帮我算一下 (12345 * 6789) 的结果")
+# 模型可能算错，因为它在"心算"
+```
+
+问题很明显：模型不能执行代码、不能查资料、不能验证自己——它只能凭参数里的知识一次性吐出答案。算错了也不知道，更不会改。
+
+### Agent 的本质：把「一问一答」变成「循环」
+
+Agent 的核心，就是把上面这种一次性调用，包进一个**循环**里：
+
+```
+┌──────────────────────────────────────────┐
+│                                            │
+│   模型思考 → 决定调用工具 → 执行工具         │
+│      ↑                          │          │
+│      └──────── 观察结果 ─────────┘          │
+│                                            │
+│         （重复，直到任务完成）               │
+└──────────────────────────────────────────┘
+```
+
+同样是算乘法，Agent 会：思考「这是个计算，我应该用计算器工具」→ 调用 `calculator("12345 * 6789")` → 拿到精确结果 `83810205` → 回答你。算错了？下一轮还能纠正。
+
+**这个循环，就是 Agent 的灵魂。设计好这个循环，就是 Loop Engineering。**
+
+## 第二章：一个最小可运行的 Loop
+
+先不谈框架，我们用最朴素的代码写出一个 Agent 循环，理解它的骨架。以 Anthropic 的 Claude API 为例：
+
+```python
+import anthropic
+
+client = anthropic.Anthropic()
+
+# 1. 定义工具
+tools = [{
+    "name": "calculator",
+    "description": "计算一个数学表达式，返回精确结果",
+    "input_schema": {
+        "type": "object",
+        "properties": {"expr": {"type": "string"}},
+        "required": ["expr"],
+    },
+}]
+
+def run_tool(name, args):
+    if name == "calculator":
+        return str(eval(args["expr"]))  # 仅作演示，生产环境勿用 eval
+    return "未知工具"
+
+# 2. 核心循环
+messages = [{"role": "user", "content": "(12345 * 6789) 等于多少？"}]
+
+while True:
+    resp = client.messages.create(
+        model="claude-sonnet-4-6",
+        max_tokens=1024,
+        tools=tools,
+        messages=messages,
+    )
+
+    # 把模型的回复加入对话历史
+    messages.append({"role": "assistant", "content": resp.content})
+
+    # 停止条件：模型不再调用工具，说明它给出了最终答案
+    if resp.stop_reason != "tool_use":
+        print(resp.content[-1].text)
+        break
+
+    # 执行模型请求的每个工具调用，把结果喂回去
+    tool_results = []
+    for block in resp.content:
+        if block.type == "tool_use":
+            result = run_tool(block.name, block.input)
+            tool_results.append({
+                "type": "tool_result",
+                "tool_use_id": block.id,
+                "content": result,
+            })
+    messages.append({"role": "user", "content": tool_results})
+```
+
+这短短几十行，已经包含了一个 Agent 循环的全部要素。下一章我们拆解它。
+
+## 第三章：Loop 的四个核心要素
+
+任何 Agent 循环，都由这四步反复组成：
+
+```
+┌─────────┐   ┌─────────┐   ┌─────────┐   ┌─────────┐
+│ 感知    │ → │ 决策    │ → │ 行动    │ → │ 观察    │
+│ Perceive│   │ Decide  │   │ Act     │   │ Observe │
+└─────────┘   └─────────┘   └────┬────┘   └────┬────┘
+     ↑                            │             │
+     └────────────────────────────┴─────────────┘
+```
+
+| 要素 | 含义 | 在上面代码里对应 |
+|------|------|------------------|
+| **感知** | 模型读取当前上下文（历史 + 工具结果） | `messages` |
+| **决策** | 模型决定下一步做什么 | `client.messages.create(...)` |
+| **行动** | 执行模型选择的工具 | `run_tool(...)` |
+| **观察** | 把执行结果反馈给模型 | `tool_result` 加回 messages |
+
+**Loop Engineering 的全部工作，就是把这四步的每一环都设计好。** 工具给得对不对、结果反馈得清不清楚、什么时候停——这些决定了 Agent 是聪明还是愚蠢。
+
+## 第四章：循环里最容易翻车的三个问题
+
+写出循环不难，写出**健壮**的循环才是真功夫。以下三个是新手必踩的坑。
+
+### 问题 1：什么时候停？（停止条件）
+
+如果停止条件设计不好，Agent 要么提前放弃，要么陷入**死循环**烧钱。健壮的做法是多重保险：
+
+```python
+MAX_STEPS = 15
+step = 0
+
+while step < MAX_STEPS:          # 1. 硬上限，防止无限循环
+    step += 1
+    resp = client.messages.create(...)
+    messages.append({"role": "assistant", "content": resp.content})
+
+    if resp.stop_reason != "tool_use":   # 2. 模型主动给出最终答案
+        break
+    # ... 执行工具
+else:
+    print("达到最大步数，强制停止")   # 3. 兜底
+```
+
+> 经验：永远要有一个 `MAX_STEPS` 硬上限。模型偶尔会在两个工具之间反复横跳，没有上限就是无底洞。
+
+### 问题 2：出错了怎么办？（错误反馈）
+
+新手常犯的错：工具一报错就 `raise` 让程序崩掉。**正确做法是把错误本身当作一次「观察」喂回模型**，让它自己想办法：
+
+```python
+def run_tool_safely(name, args):
+    try:
+        return run_tool(name, args), False
+    except Exception as e:
+        # 把报错信息返回给模型，而不是让程序崩溃
+        return f"工具执行出错：{e}。请检查参数后重试。", True
+
+# 在循环里：
+result, is_error = run_tool_safely(block.name, block.input)
+tool_results.append({
+    "type": "tool_result",
+    "tool_use_id": block.id,
+    "content": result,
+    "is_error": is_error,
+})
+```
+
+这一步是 Agent 能「自我修正」的关键：参数写错了？模型看到报错，下一轮自动改。**会自愈的循环，正是 Loop Engineering 的精髓。**
+
+### 问题 3：上下文越滚越大怎么办？（上下文管理）
+
+每一轮，`messages` 都在增长。跑十几轮后，工具返回的大段日志、网页内容会把上下文窗口撑爆，又慢又贵。常见对策：
+
+```python
+# 策略一：截断过长的工具结果
+def truncate(text, limit=2000):
+    return text if len(text) <= limit else text[:limit] + "\n...(已截断)"
+
+# 策略二：当历史过长时，压缩早期对话为摘要
+if total_tokens(messages) > 100_000:
+    summary = llm.summarize(messages[:-6])   # 把前面的压成摘要
+    messages = [{"role": "user", "content": summary}] + messages[-6:]
+```
+
+> 这就是为什么 Loop Engineering 和 Context Engineering 是孪生兄弟：循环每转一圈都在改变上下文，你必须主动管理它。
+
+## 第五章：常见的 Loop 模式
+
+不同任务适合不同的循环结构，这里是四种最经典的模式。
+
+| 模式 | 核心思想 | 适合场景 |
+|------|----------|----------|
+| **ReAct** | 思考(Reason)与行动(Act)交替进行 | 通用，最常用 |
+| **Plan-and-Execute** | 先制定完整计划，再逐步执行 | 复杂、步骤多的任务 |
+| **Reflection** | 做完后自我审查，发现问题再重做 | 追求高质量输出 |
+| **Multi-Agent** | 多个 Agent 各司其职、互相协作 | 大型、需分工的任务 |
+
+### ReAct：最经典的循环
+
+ReAct 的精髓是让模型在每一步**显式地「想一下」再行动**，思考过程本身就提升了决策质量：
+
+```
+Thought: 用户想知道北京今天的天气，我需要查询天气工具
+Action:  get_weather(city="北京")
+Observation: 北京 晴 22°C
+Thought: 我已经拿到天气数据，可以回答了
+Answer:  北京今天晴，气温 22°C。
+```
+
+### Reflection：让 Agent 自我审查
+
+在主循环外再套一层「审查」循环，质量会明显提升：
+
+```python
+draft = agent_loop("写一个快速排序函数")           # 第一遍产出
+for _ in range(2):                                  # 最多反思 2 轮
+    critique = llm.chat(f"严格审查这段代码的 bug 和边界情况：\n{draft}")
+    if "没有问题" in critique:
+        break
+    draft = llm.chat(f"根据以下意见修改代码：\n{critique}\n\n原代码：\n{draft}")
+```
+
+## 第六章：实战 —— 一个会查资料并自我修正的 Agent
+
+把前面所有要点串起来，写一个完整的、带停止条件和错误反馈的 ReAct Agent。它能用「搜索」和「计算」两个工具回答复杂问题。
+
+```python
+import anthropic
+
+client = anthropic.Anthropic()
+
+tools = [
+    {
+        "name": "search",
+        "description": "搜索互联网，返回相关信息摘要",
+        "input_schema": {
+            "type": "object",
+            "properties": {"query": {"type": "string"}},
+            "required": ["query"],
+        },
+    },
+    {
+        "name": "calculator",
+        "description": "精确计算数学表达式",
+        "input_schema": {
+            "type": "object",
+            "properties": {"expr": {"type": "string"}},
+            "required": ["expr"],
+        },
+    },
+]
+
+def execute(name, args):
+    """工具执行，任何异常都转成可读的反馈而不是崩溃"""
+    try:
+        if name == "search":
+            # 此处接你真实的搜索 API
+            return f"[搜索结果] 关于「{args['query']}」的相关信息..."
+        if name == "calculator":
+            return str(eval(args["expr"], {"__builtins__": {}}))
+        return f"未知工具：{name}"
+    except Exception as e:
+        return f"执行出错：{e}，请调整后重试"
+
+def run_agent(question, max_steps=15):
+    messages = [{"role": "user", "content": question}]
+
+    for step in range(1, max_steps + 1):
+        resp = client.messages.create(
+            model="claude-sonnet-4-6",
+            max_tokens=2048,
+            system="你是一个严谨的助手。需要事实时用 search，需要精确计算时用 calculator。",
+            tools=tools,
+            messages=messages,
+        )
+        messages.append({"role": "assistant", "content": resp.content})
+
+        # 停止条件：不再调用工具 = 已得出最终答案
+        if resp.stop_reason != "tool_use":
+            return resp.content[-1].text
+
+        # 行动 + 观察
+        results = []
+        for block in resp.content:
+            if block.type == "tool_use":
+                print(f"  [第{step}步] 调用 {block.name}({block.input})")
+                output = execute(block.name, block.input)
+                results.append({
+                    "type": "tool_result",
+                    "tool_use_id": block.id,
+                    "content": output,
+                })
+        messages.append({"role": "user", "content": results})
+
+    return "（已达到最大步数，未能完成）"
+
+
+print(run_agent("帮我搜一下某只股票最新价格，再算一下买 350 股要多少钱"))
+```
+
+运行时你会看到 Agent 自己一步步「搜索 → 拿到价格 → 计算 → 给出答案」，中间哪一步出错都能自动重试。**这就是一个最小但完整的 Loop Engineering 成果。**
+
+## 第七章：进阶话题
+
+### 1. 防止死循环与「鬼打墙」
+
+除了 `MAX_STEPS`，还可以检测**重复行为**：
+
+```python
+recent_actions = []
+# 在循环中：
+sig = (block.name, str(block.input))
+if recent_actions.count(sig) >= 3:   # 同一个调用重复 3 次
+    # 注入一条提示，打破僵局
+    output = "你在重复同样的操作且没有进展，请换一种思路或直接给出当前最佳答案。"
+recent_actions.append(sig)
+```
+
+### 2. Human-in-the-loop（人在回路）
+
+危险操作（删数据、发邮件、花钱）不要让 Agent 自动执行，在循环里插入人工确认——这正是 Claude Code、Codex 这类工具「执行前要你确认」的本质：
+
+```python
+DANGEROUS = {"delete_file", "send_email", "run_shell"}
+if block.name in DANGEROUS:
+    if input(f"Agent 想执行 {block.name}({block.input})，允许吗？(y/n) ") != "y":
+        output = "用户拒绝了该操作，请改用其他方式"
+```
+
+### 3. 并行工具调用
+
+模型一轮可能同时请求多个独立工具，串行执行很慢，可以并发：
+
+```python
+import concurrent.futures
+
+with concurrent.futures.ThreadPoolExecutor() as pool:
+    futures = {pool.submit(execute, b.name, b.input): b
+               for b in resp.content if b.type == "tool_use"}
+    # 收集结果...
+```
+
+## 第八章：最佳实践清单
+
+1. **永远设 `MAX_STEPS` 硬上限**——防止无限循环烧钱。
+2. **错误当观察喂回模型，别让程序崩**——这是自我修正的基础。
+3. **主动管理上下文**——截断长结果、压缩老历史。
+4. **工具描述写清楚**——模型靠 description 决定何时调用，写不清它就乱用。
+5. **危险操作加人工确认**——尤其是不可逆的操作。
+6. **记录每一步日志**——循环是黑盒，没有日志没法调试。
+7. **从简单循环起步**——先把 ReAct 跑通，再考虑 Plan/Reflection/Multi-Agent。
+
+## 总结：为什么 Loop Engineering 是未来
+
+```
+Prompt Engineering   →  优化「一句话」
+Context Engineering  →  优化「喂什么进去」
+Loop Engineering     →  优化「模型如何反复行动与自我纠正」
+```
+
+单次 prompt 的能力上限，是模型「一次想清楚」的能力；而循环的能力上限，是模型「**不断尝试、观察、修正**」的能力——后者高得多。这也是为什么同样的底层模型，套在好的循环里能写完整个项目，套在差的循环里连个 bug 都修不利索。
+
+随着模型越来越强，「写出完美的 prompt」会越来越不重要，而「设计出让模型能持续行动、自我纠错、知道何时停止的循环」会越来越关键。**Loop Engineering，正是 Agent 时代真正的核心技能。**
+
+建议你现在就把第六章那段代码跑起来，接上一个真实的搜索 API，亲手感受一个 Agent 循环是怎么「活」起来的——动手一次，胜过读十遍。
+
+---
+
+> 本文由 AI 整理生成，代码示例仅作教学演示，生产环境请做好安全校验（切勿使用 `eval`），仅供学习参考。
