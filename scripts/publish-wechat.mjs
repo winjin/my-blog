@@ -211,7 +211,10 @@ async function createDraft(token, article) {
       articles: [{
         title: article.title,
         author: '',
-        digest: article.description,
+        // WeChat digest 上限约 120 字，超出会报 45004，这里截断
+        digest: article.description.length > 110
+          ? article.description.slice(0, 109) + '…'
+          : article.description,
         content: article.html,
         thumb_media_id: article.thumbMediaId,
         content_source_url: '',
