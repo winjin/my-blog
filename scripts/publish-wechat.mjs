@@ -10,8 +10,9 @@
  */
 
 import { readFileSync, readdirSync, existsSync } from 'fs';
-import { join, dirname, basename } from 'path';
+import { join, dirname, basename, extname } from 'path';
 import { fileURLToPath } from 'url';
+import { execSync } from 'child_process';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(__dirname, '..');
@@ -60,52 +61,69 @@ async function getAccessToken() {
   return data.access_token;
 }
 
-// --- Upload image to WeChat material ---
-async function uploadImage(token, imageUrl) {
-  console.log('  Downloading cover image...');
-  let imgBuffer;
+// --- Resolve a local image path (e.g. /images/x.png) to a file on disk ---
+function resolveLocal(src) {
+  const rel = src.replace(/^\//, '');
+  for (const p of [join(ROOT, 'public', rel), join(ROOT, rel)]) {
+    if (existsSync(p)) return p;
+  }
+  return null;
+}
+
+// --- Get an upload-ready JPEG buffer (downloads remote, compresses via sips) ---
+// WeChat in-article images are limited to ~1MB, so we resize to <=1080px JPEG.
+function prepareImage(src) {
+  let inputPath;
+  if (/^https?:\/\//.test(src)) {
+    inputPath = `/tmp/wx-src-${Math.random().toString(36).slice(2)}`;
+    execSync(`curl -sL "${src}" -o "${inputPath}" --max-time 20`);
+  } else {
+    inputPath = resolveLocal(src);
+    if (!inputPath) throw new Error(`本地图片不存在: ${src}`);
+  }
+  const out = `/tmp/wx-opt-${Math.random().toString(36).slice(2)}.jpg`;
   try {
-    const imgRes = await fetch(imageUrl);
-    if (!imgRes.ok) throw new Error(`HTTP ${imgRes.status}`);
-    imgBuffer = Buffer.from(await imgRes.arrayBuffer());
-  } catch (e) {
-    // Fallback: use curl to download (handles TLS issues)
-    const { execSync } = await import('child_process');
-    const tmpPath = '/tmp/wechat-cover-tmp.jpg';
-    execSync(`curl -sL "${imageUrl}" -o ${tmpPath} --max-time 15`);
-    const { readFileSync } = await import('fs');
-    imgBuffer = readFileSync(tmpPath);
+    execSync(`sips -Z 1080 -s format jpeg -s formatOptions 72 "${inputPath}" --out "${out}"`, { stdio: 'ignore' });
+    return { buffer: readFileSync(out), filename: 'image.jpg' };
+  } catch {
+    // sips unavailable/failed — fall back to raw bytes
+    return { buffer: readFileSync(inputPath), filename: 'image' + (extname(inputPath) || '.jpg') };
   }
+}
 
-  const boundary = '----WebKitFormBoundary' + Math.random().toString(36).slice(2);
-  const filename = 'cover.jpg';
-
-  const bodyParts = [
-    `--${boundary}\r\n`,
-    `Content-Disposition: form-data; name="media"; filename="${filename}"\r\n`,
-    `Content-Type: image/jpeg\r\n\r\n`,
-  ];
-
-  const header = Buffer.from(bodyParts.join(''));
-  const footer = Buffer.from(`\r\n--${boundary}--\r\n`);
-  const body = Buffer.concat([header, imgBuffer, footer]);
-
-  console.log('  Uploading to WeChat...');
-  const res = await fetch(
-    `${WX_API}/material/add_material?access_token=${token}&type=image`,
-    {
-      method: 'POST',
-      headers: { 'Content-Type': `multipart/form-data; boundary=${boundary}` },
-      body,
-    }
+// --- Generic multipart upload to a WeChat endpoint ---
+async function wxUpload(url, buffer, filename) {
+  const boundary = '----WK' + Math.random().toString(36).slice(2);
+  const header = Buffer.from(
+    `--${boundary}\r\nContent-Disposition: form-data; name="media"; filename="${filename}"\r\n` +
+    `Content-Type: image/jpeg\r\n\r\n`
   );
-
+  const footer = Buffer.from(`\r\n--${boundary}--\r\n`);
+  const body = Buffer.concat([header, buffer, footer]);
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': `multipart/form-data; boundary=${boundary}` },
+    body,
+  });
   const data = await res.json();
-  if (data.errcode) {
-    throw new Error(`Upload error: ${data.errcode} ${data.errmsg}`);
-  }
+  if (data.errcode) throw new Error(`${data.errcode} ${data.errmsg}`);
+  return data;
+}
+
+// --- Upload cover as permanent material, returns media_id (for thumb) ---
+async function uploadCover(token, src) {
+  console.log(`  Preparing cover (${src})...`);
+  const { buffer, filename } = prepareImage(src);
+  const data = await wxUpload(`${WX_API}/material/add_material?access_token=${token}&type=image`, buffer, filename);
   console.log(`  Cover uploaded: media_id=${data.media_id}`);
   return data.media_id;
+}
+
+// --- Upload an in-article image, returns a WeChat-hosted URL ---
+async function uploadContentImage(token, src) {
+  const { buffer, filename } = prepareImage(src);
+  const data = await wxUpload(`${WX_API}/media/uploadimg?access_token=${token}`, buffer, filename);
+  return data.url;
 }
 
 // --- Parse MDX file ---
@@ -125,7 +143,8 @@ function parseMDX(filePath) {
 }
 
 // --- Markdown to WeChat HTML ---
-function mdToWechatHtml(md) {
+// imgMap maps original markdown image src -> WeChat-hosted URL
+function mdToWechatHtml(md, imgMap = {}) {
   let html = md;
 
   // Remove the trailing AI disclaimer
@@ -137,6 +156,16 @@ function mdToWechatHtml(md) {
     const escaped = code.replace(/</g, '&lt;').replace(/>/g, '&gt;').trim();
     const placeholder = `__CODE_BLOCK_${codeBlocks.length}__`;
     codeBlocks.push(`<pre style="background:#f6f8fa;border-radius:6px;padding:16px;overflow-x:auto;font-size:13px;line-height:1.6;margin:16px 0;"><code>${escaped}</code></pre>`);
+    return placeholder;
+  });
+
+  // Images — extract before links/paragraphs; swap src for WeChat-hosted URL
+  const images = [];
+  html = html.replace(/!\[([^\]]*)\]\(([^)]+)\)/g, (_, alt, src) => {
+    const url = imgMap[src] || src;
+    const placeholder = `__IMG_${images.length}__`;
+    const caption = alt ? `<br><span style="color:#888;font-size:13px;">${alt}</span>` : '';
+    images.push(`<p style="text-align:center;margin:18px 0;"><img src="${url}" alt="${alt}" style="max-width:100%;border-radius:8px;"/>${caption}</p>`);
     return placeholder;
   });
 
@@ -188,9 +217,12 @@ function mdToWechatHtml(md) {
   // Clean up empty paragraphs
   html = html.replace(/<p[^>]*>\s*<\/p>/g, '');
 
-  // Restore code blocks and inline code
+  // Restore code blocks, images, and inline code
   codeBlocks.forEach((block, i) => {
     html = html.replace(`__CODE_BLOCK_${i}__`, block);
+  });
+  images.forEach((img, i) => {
+    html = html.replace(`__IMG_${i}__`, img);
   });
   inlineCodes.forEach((code, i) => {
     html = html.replace(`__INLINE_CODE_${i}__`, code);
@@ -264,12 +296,25 @@ async function main() {
 
       let thumbMediaId = '';
       if (cover) {
-        thumbMediaId = await uploadImage(token, cover);
+        thumbMediaId = await uploadCover(token, cover);
       } else {
         console.warn('  Warning: No cover image, using empty thumb');
       }
 
-      const html = mdToWechatHtml(body);
+      // Upload every inline image and map its src -> WeChat-hosted URL
+      const imgMap = {};
+      const srcs = [...new Set([...body.matchAll(/!\[[^\]]*\]\(([^)]+)\)/g)].map(m => m[1]))];
+      for (const src of srcs) {
+        try {
+          console.log(`  Uploading inline image: ${src}`);
+          imgMap[src] = await uploadContentImage(token, src);
+        } catch (e) {
+          console.warn(`  ! inline image failed (${src}): ${e.message} — keeping original`);
+          imgMap[src] = src;
+        }
+      }
+
+      const html = mdToWechatHtml(body, imgMap);
       const draftId = await createDraft(token, { title, description, html, thumbMediaId });
       console.log(`  ✓ Draft created: media_id=${draftId}\n`);
     } catch (err) {
