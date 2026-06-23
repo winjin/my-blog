@@ -1,0 +1,233 @@
+---
+title: "MCP 入门：让 AI 真正连上你的世界的「USB-C 接口」"
+description: "由浅入深讲解 MCP（模型上下文协议）：从它要解决的问题、客户端-服务器架构，到三大核心能力（Tools/Resources/Prompts），并用可运行的代码手把手写一个属于你自己的 MCP Server。"
+category: tech
+tags: ["MCP", "Model Context Protocol", "AI Agent", "Claude", "大模型应用", "工具调用"]
+date: 2026-06-19
+draft: false
+cover: "https://images.unsplash.com/photo-1518770660439-4636190af475?w=1200&h=630&fit=crop"
+---
+
+你可能已经用过 Claude、ChatGPT 这类大模型，也听说过「让 AI 读你的数据库」「让 AI 操作你的文件」。但这些能力到底是怎么接上去的？2024 年底 Anthropic 提出的 **MCP（Model Context Protocol，模型上下文协议）**，正在成为这件事的标准答案。
+
+这篇文章会从最基础的概念讲起，一步步带你理解 MCP 是什么、为什么需要它，并用可运行的代码亲手写一个 MCP Server。
+
+## 第一章：MCP 要解决什么问题
+
+### 没有 MCP 之前的世界
+
+大模型本身只会「聊天」——它的知识冻结在训练数据里，既看不到你的文件，也连不上你的数据库和 API。要让它「干活」，每个开发者都得自己写一套对接代码：
+
+```
+Claude    →  自己写一套对接 GitHub 的代码
+ChatGPT   →  再写一套对接 GitHub 的代码
+你的应用  →  又写一套对接 GitHub 的代码
+```
+
+每个「模型 × 工具」的组合都要单独开发，这就是经典的 **M×N 问题**：M 个模型对接 N 个工具，要写 M×N 套适配代码，重复劳动惊人。
+
+### MCP 的核心思想：定一个标准
+
+MCP 的思路和 USB-C 一模一样：**定义一个统一的接口标准**。工具方只要实现一次 MCP 接口，所有支持 MCP 的模型/客户端都能用；模型方只要支持 MCP，就能接入所有 MCP 工具。
+
+```
+M×N 问题  →  M+N 解法
+
+工具方实现一次 MCP Server
+模型方实现一次 MCP Client
+两边通过统一协议对接
+```
+
+> Anthropic 把 MCP 比作「AI 应用的 USB-C 接口」——一个口，连接一切。
+
+## 第二章：MCP 的架构
+
+MCP 是一套**客户端-服务器**架构，有三个角色：
+
+```
+┌─────────────┐         ┌─────────────┐        ┌──────────────┐
+│  Host        │  内含   │  MCP Client │  协议  │  MCP Server  │
+│ (Claude等)   │ ──────> │             │ <────> │ (你写的工具) │
+└─────────────┘         └─────────────┘        └──────────────┘
+                                                      │
+                                                      ↓
+                                          数据库 / 文件 / API / ...
+```
+
+| 角色 | 说明 | 例子 |
+|------|------|------|
+| **Host（宿主）** | 用户直接交互的 AI 应用 | Claude Desktop、Cursor、Claude Code |
+| **Client（客户端）** | Host 内部，负责和一个 Server 通信 | 由 Host 自动管理 |
+| **Server（服务器）** | 提供具体能力的程序，**你主要写这个** | 文件读写、查数据库、调 API |
+
+一个 Host 可以同时连多个 Server：一个连 GitHub、一个连本地文件、一个连数据库。
+
+### 两种传输方式
+
+MCP Client 和 Server 之间通过 **JSON-RPC 2.0** 通信，常见两种传输层：
+
+- **stdio**：Server 作为本地子进程，通过标准输入输出通信。适合本地工具（读文件、跑命令）。
+- **HTTP / SSE**：Server 是远程服务，通过 HTTP 通信。适合云端服务、团队共享。
+
+## 第三章：MCP 的三大核心能力
+
+一个 MCP Server 可以向模型暴露三类东西，这是 MCP 的精髓：
+
+| 能力 | 谁来调用 | 类比 | 用途 |
+|------|----------|------|------|
+| **Tools（工具）** | 模型自主决定调用 | 函数调用 | 让模型「做事」：查数据、发请求、写文件 |
+| **Resources（资源）** | 应用/用户提供给模型 | 只读文件 | 给模型「看」上下文：文档、配置、记录 |
+| **Prompts（提示模板）** | 用户主动触发 | 预设指令 | 可复用的提示词模板，如「审查这段代码」 |
+
+简单记忆：
+
+```
+Tools     →  模型能「主动调用」的动作（model-controlled）
+Resources →  喂给模型「阅读」的数据（app-controlled）
+Prompts   →  用户「点一下就用」的模板（user-controlled）
+```
+
+新手最常用、最重要的是 **Tools**，下面的实战就从它入手。
+
+## 第四章：实战 —— 写一个最小的 MCP Server
+
+我们用官方的 Python SDK 写一个提供「天气查询」和「计算」两个工具的 Server。
+
+### 第 1 步：安装 SDK
+
+```bash
+pip install "mcp[cli]"
+```
+
+### 第 2 步：写 Server
+
+官方提供了 `FastMCP`，用装饰器就能把普通函数变成 MCP 工具：
+
+```python
+from mcp.server.fastmcp import FastMCP
+
+# 创建一个 Server，名字随便起
+mcp = FastMCP("我的第一个工具箱")
+
+# 用 @mcp.tool() 把函数暴露成工具
+# 函数的 docstring 会变成工具描述，模型靠它决定何时调用——一定要写清楚！
+@mcp.tool()
+def get_weather(city: str) -> str:
+    """查询指定城市的当前天气。参数 city 是城市名，如「北京」。"""
+    # 这里应接真实天气 API，演示先写死
+    return f"{city} 今天晴，气温 22°C，微风。"
+
+@mcp.tool()
+def add(a: float, b: float) -> float:
+    """计算两个数字相加的结果。"""
+    return a + b
+
+if __name__ == "__main__":
+    # 默认用 stdio 传输，作为本地子进程运行
+    mcp.run()
+```
+
+短短二十行，一个合规的 MCP Server 就完成了。**类型注解和 docstring 至关重要**——SDK 会自动根据它们生成工具的参数 schema 和描述，模型完全依赖这些信息来正确调用。
+
+### 第 3 步：本地调试
+
+官方提供了一个可视化调试器，可以不接模型先手动测试：
+
+```bash
+mcp dev server.py
+```
+
+它会打开一个网页，你能看到工具列表、手动填参数调用、查看返回结果。**先用它确认工具能跑通，再接模型。**
+
+## 第五章：把 Server 接到 Claude
+
+写好的 Server 怎么用起来？以 Claude Desktop 为例，编辑它的配置文件：
+
+```json
+{
+  "mcpServers": {
+    "my-toolbox": {
+      "command": "python",
+      "args": ["/绝对路径/server.py"]
+    }
+  }
+}
+```
+
+重启 Claude Desktop 后，它就会自动启动你的 Server 作为子进程。现在你问 Claude「北京今天天气怎么样」，它会**自主决定**调用你的 `get_weather` 工具，拿到结果再回答你。
+
+```
+你：北京今天适合出门吗？
+Claude：（内部调用 get_weather("北京")）
+       → 拿到「北京 晴 22°C 微风」
+       → 北京今天晴，22°C 微风，很适合出门！
+```
+
+> 这就是 MCP 的魔力：你只写了一个普通 Python 函数，模型就学会了「查天气」这项新技能，而你完全没改模型。
+
+## 第六章：暴露 Resources 和 Prompts
+
+除了 Tools，再看另外两种能力的写法。
+
+### Resources：给模型只读上下文
+
+```python
+@mcp.resource("config://app")
+def get_config() -> str:
+    """提供应用的当前配置，供模型参考。"""
+    return "版本: 1.0\n环境: 生产\n超时: 30s"
+```
+
+Resource 有一个 URI（如 `config://app`），应用可以把它的内容主动塞进模型上下文，让模型「读到」这些信息，但模型不会主动去调用它。
+
+### Prompts：可复用的提示模板
+
+```python
+@mcp.prompt()
+def review_code(code: str) -> str:
+    """生成一个代码审查提示。"""
+    return f"请严格审查以下代码的 bug、安全问题和边界情况：\n\n{code}"
+```
+
+用户在 Host 里能看到「review_code」这个预设命令，点一下、填入代码，就会展开成完整提示词发给模型。
+
+## 第七章：MCP 生态现状
+
+MCP 推出后被快速采纳，现在已经有大量现成的 Server 可以直接用：
+
+```
+官方/社区现成 Server（部分）:
+  filesystem   →  读写本地文件
+  github       →  操作仓库、Issue、PR
+  postgres     →  查询 PostgreSQL 数据库
+  puppeteer    →  控制浏览器抓网页
+  slack        →  收发 Slack 消息
+  google-maps  →  地图与导航
+```
+
+支持 MCP 的客户端也越来越多：Claude Desktop、Claude Code、Cursor、Zed、Windsurf 等。这意味着你写的 Server 一次开发，能在所有这些工具里复用。
+
+## 第八章：新手实践建议
+
+1. **从 Tools 起步**：三大能力里 Tools 最直观、最常用，先把一个工具跑通。
+2. **docstring 和类型注解写清楚**：模型靠它们理解工具，写得含糊模型就乱调用。
+3. **善用 `mcp dev` 调试器**：不接模型先手动测，省去反复重启的麻烦。
+4. **本地工具用 stdio，远程服务用 HTTP**：选对传输方式。
+5. **工具粒度适中**：一个工具做一件清楚的事，别把十个功能塞进一个工具。
+6. **危险操作要谨慎**：删数据、花钱这类操作，最好让 Host 层做人工确认。
+7. **先用现成 Server**：filesystem、github 等官方 Server 拿来即用，先体验再造轮子。
+
+## 总结：为什么 MCP 重要
+
+```
+过去：每个「模型 × 工具」都要单独对接（M×N）
+现在：实现一次 MCP，到处可用（M+N）
+```
+
+MCP 解决的不是「让模型更聪明」，而是「让模型更**有用**」——把模型从一个封闭的聊天框，变成一个能连接你全部数据和工具的助手。随着越来越多的应用支持 MCP，「给 AI 接上一个新能力」会像「插一个 USB 设备」一样简单。
+
+建议你现在就把第四章那段代码跑起来，用 `mcp dev` 调通，再接到 Claude Desktop 里——亲手感受一次「我写的函数，模型学会了」的瞬间，胜过读十遍文档。
+
+---
+
+> 本文由 AI 整理生成，代码示例基于 MCP 官方 Python SDK，接口细节请以官方文档为准，仅供学习参考。
