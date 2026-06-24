@@ -44,3 +44,24 @@ jobs:
             ${DEPLOY_USER}@${DEPLOY_HOST}:/var/www/my-blog/dist/
 
           echo "Deploy complete!"
+
+      - name: Publish new posts to WeChat draft (from server)
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+        run: |
+          # SSH key + known_hosts were written to ~/.ssh in the deploy step
+          # (same runner, shared filesystem). The WeChat API call runs ON the
+          # server so it originates from the server's whitelisted static IP.
+          rsync -avz \
+            src/content/posts/ \
+            -e "ssh -i ~/.ssh/id_ed25519" \
+            ${DEPLOY_USER}@${DEPLOY_HOST}:/var/www/my-blog/src/content/posts/
+
+          rsync -avz \
+            scripts/publish-wechat.mjs \
+            -e "ssh -i ~/.ssh/id_ed25519" \
+            ${DEPLOY_USER}@${DEPLOY_HOST}:/var/www/my-blog/scripts/publish-wechat.mjs
+
+          ssh -i ~/.ssh/id_ed25519 ${DEPLOY_USER}@${DEPLOY_HOST} \
+            "cd /var/www/my-blog && node scripts/publish-wechat.mjs --new"

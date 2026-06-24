@@ -9,7 +9,7 @@
  *   node scripts/publish-wechat.mjs --all
  */
 
-import { readFileSync, readdirSync, existsSync } from 'fs';
+import { readFileSync, writeFileSync, readdirSync, existsSync } from 'fs';
 import { join, dirname, basename, extname } from 'path';
 import { fileURLToPath } from 'url';
 import { execSync } from 'child_process';
@@ -18,10 +18,11 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(__dirname, '..');
 
 // Node's bundled CA roots can't verify the WeChat API cert chain (DigiCert
-// intermediate missing), so reuse the system bundle that curl trusts. This var
-// must be set before TLS init, so re-exec ourselves with it if absent.
-const SYSTEM_CA = '/etc/ssl/cert.pem';
-if (!process.env.NODE_EXTRA_CA_CERTS && existsSync(SYSTEM_CA)) {
+// intermediate missing), so reuse the OS bundle that curl/openssl trusts. This
+// var must be set before TLS init, so re-exec ourselves with it if absent.
+// Path differs by OS: macOS uses /etc/ssl/cert.pem, Debian/Ubuntu ca-certificates.
+const SYSTEM_CA = ['/etc/ssl/cert.pem', '/etc/ssl/certs/ca-certificates.crt', '/etc/pki/tls/certs/ca-bundle.crt'].find(p => existsSync(p));
+if (!process.env.NODE_EXTRA_CA_CERTS && SYSTEM_CA) {
   const { spawnSync } = await import('child_process');
   const { status } = spawnSync(process.execPath, [fileURLToPath(import.meta.url), ...process.argv.slice(2)], {
     stdio: 'inherit',
@@ -82,13 +83,20 @@ function prepareImage(src) {
     if (!inputPath) throw new Error(`本地图片不存在: ${src}`);
   }
   const out = `/tmp/wx-opt-${Math.random().toString(36).slice(2)}.jpg`;
-  try {
-    execSync(`sips -Z 1080 -s format jpeg -s formatOptions 72 "${inputPath}" --out "${out}"`, { stdio: 'ignore' });
-    return { buffer: readFileSync(out), filename: 'image.jpg' };
-  } catch {
-    // sips unavailable/failed — fall back to raw bytes
-    return { buffer: readFileSync(inputPath), filename: 'image' + (extname(inputPath) || '.jpg') };
+  // macOS sips, then ImageMagick (Linux servers), then raw bytes as last resort.
+  for (const cmd of [
+    `sips -Z 1080 -s format jpeg -s formatOptions 72 "${inputPath}" --out "${out}"`,
+    `magick "${inputPath}" -resize "1080x1080>" -quality 72 "${out}"`,
+    `convert "${inputPath}" -resize "1080x1080>" -quality 72 "${out}"`,
+  ]) {
+    try {
+      execSync(cmd, { stdio: 'ignore' });
+      return { buffer: readFileSync(out), filename: 'image.jpg' };
+    } catch { /* tool unavailable — try next */ }
   }
+  // No image tool available (e.g. minimal server): use raw bytes. Fine for
+  // remote covers already sized <=1MB, but very large local images may be rejected.
+  return { buffer: readFileSync(inputPath), filename: 'image' + (extname(inputPath) || '.jpg') };
 }
 
 // --- Generic multipart upload to a WeChat endpoint ---
@@ -262,13 +270,48 @@ async function createDraft(token, article) {
   return data.media_id;
 }
 
+// --- Publish ledger: records which posts have already been pushed to WeChat,
+//     so `--new` only publishes newly-added posts (and never re-publishes). ---
+const LEDGER = join(ROOT, '.wechat-published.json');
+
+function loadLedger() {
+  if (!existsSync(LEDGER)) return null;
+  try {
+    const data = JSON.parse(readFileSync(LEDGER, 'utf-8'));
+    return data.published ? data : { published: {} };
+  } catch {
+    return { published: {} };
+  }
+}
+
+function saveLedger(ledger) {
+  writeFileSync(LEDGER, JSON.stringify(ledger, null, 2) + '\n');
+}
+
 // --- Main ---
 async function main() {
   const args = process.argv.slice(2);
+  const postsDir = join(ROOT, 'src/content/posts');
 
   let files = [];
-  if (args.includes('--all')) {
-    const postsDir = join(ROOT, 'src/content/posts');
+  let ledger = null; // non-null only in --new mode; records successes as we go
+  if (args.includes('--new')) {
+    ledger = loadLedger();
+    const allPosts = readdirSync(postsDir).filter(f => f.endsWith('.mdx')).sort();
+    if (ledger === null) {
+      // No ledger yet: refuse to mass-publish every existing post. Seed a
+      // baseline of current posts and exit; later runs publish only new ones.
+      saveLedger({ published: Object.fromEntries(allPosts.map(f => [f, { seeded: true }])) });
+      console.log(`No ledger found — seeded baseline with ${allPosts.length} existing post(s) WITHOUT publishing.`);
+      console.log('Add a new post and re-run to auto-publish it.');
+      return;
+    }
+    files = allPosts.filter(f => !ledger.published[f]).map(f => join(postsDir, f));
+    if (files.length === 0) {
+      console.log('No new posts to publish.');
+      return;
+    }
+  } else if (args.includes('--all')) {
     files = readdirSync(postsDir)
       .filter(f => f.endsWith('.mdx'))
       .sort()
@@ -278,6 +321,7 @@ async function main() {
   } else {
     console.error('Usage: node scripts/publish-wechat.mjs <file.mdx> [file2.mdx ...]');
     console.error('       node scripts/publish-wechat.mjs --all');
+    console.error('       node scripts/publish-wechat.mjs --new   (publish posts not yet in the ledger)');
     process.exit(1);
   }
 
@@ -317,6 +361,11 @@ async function main() {
       const html = mdToWechatHtml(body, imgMap);
       const draftId = await createDraft(token, { title, description, html, thumbMediaId });
       console.log(`  ✓ Draft created: media_id=${draftId}\n`);
+      if (ledger) {
+        // Persist after each success so a mid-batch failure won't re-publish earlier ones.
+        ledger.published[name] = { at: new Date().toISOString(), draftId };
+        saveLedger(ledger);
+      }
     } catch (err) {
       console.error(`  ✗ Failed: ${err.message}\n`);
     }

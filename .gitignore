@@ -8,6 +8,9 @@ dist/
 .env
 .env.production
 
+# WeChat publish ledger (per-server state, lives on the deploy host)
+.wechat-published.json
+
 # macOS
 .DS_Store
 
