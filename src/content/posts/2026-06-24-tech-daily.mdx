@@ -1,0 +1,257 @@
+---
+title: "身份认证入门：从 Cookie、Session 到 JWT，一篇讲透「网站怎么知道你是你」"
+description: "由浅入深讲解 Web 身份认证：从 HTTP 无状态的本质、Cookie-Session 机制，到 Token 与 JWT 的原理和结构，并用可运行的代码实现一套完整的登录认证流程，附常见安全坑点。"
+category: tech
+tags: ["JWT", "身份认证", "Session", "Cookie", "Web安全", "后端"]
+date: 2026-06-24
+draft: false
+cover: "https://images.unsplash.com/photo-1555066931-4365d14bab8c?w=1200&h=630&fit=crop"
+---
+
+你登录一个网站后,在站内点来点去,它始终知道"你是已登录的某某某"。但奇怪的是,HTTP 协议本身是"无记忆"的——每次请求都像初次见面。那网站到底是怎么"记住你"的?答案就是 **身份认证(Authentication)** 机制:Cookie、Session、Token、JWT。
+
+这篇文章会从最基础的"HTTP 为什么没记性"讲起,一步步带你理解这套机制,并用可运行的代码实现一套完整的登录认证。
+
+## 第一章:问题的根源——HTTP 是无状态的
+
+HTTP 协议有一个根本特性:**无状态(stateless)**。意思是,服务器处理完一个请求就"忘得一干二净",下一个请求来了,它完全不知道这和上一个请求是不是同一个人。
+
+```
+你:  我登录了,我是小明        → 服务器:好的(然后忘了)
+你:  把我的订单给我           → 服务器:你是谁?我不认识你
+```
+
+这就尴尬了——你刚登录,下一秒请求订单,服务器又不认识你了。**所以我们需要一种机制,让服务器在多次请求之间"认出"同一个用户**。这就是认证要解决的核心问题。
+
+> 注意区分两个常被混淆的词:**认证(Authentication)** 是"你是谁",**授权(Authorization)** 是"你能干什么"。本文主要讲认证。
+
+## 第二章:第一块拼图——Cookie
+
+### Cookie 是什么
+
+**Cookie 是服务器存在你浏览器里的一小段数据**。服务器在响应里通过 `Set-Cookie` 发给浏览器,浏览器保存下来,**之后每次请求都自动带上它**。
+
+```
+① 服务器响应:  Set-Cookie: user=xiaoming
+                        ↓ 浏览器自动保存
+② 之后每次请求: Cookie: user=xiaoming   ← 浏览器自动附带
+```
+
+这样服务器就能在每次请求里读到 Cookie,从而"认出"你。Cookie 解决了"请求之间如何携带身份标记"的问题。
+
+### 但直接把用户信息放 Cookie 里很危险
+
+如果直接写 `Cookie: user=xiaoming&role=admin`,问题就大了:Cookie 存在用户浏览器里,**用户可以随意篡改**——把 `role=admin` 一改,岂不是人人都能当管理员?
+
+所以我们不能信任 Cookie 里的明文内容。这就引出了下一块拼图。
+
+## 第三章:经典方案——Session(服务端记账)
+
+### 核心思想:钥匙在你手里,保险柜在我这
+
+Session 的思路是:**真正的用户信息存在服务器端,只把一个无意义的"钥匙"(Session ID)放进 Cookie**。
+
+```
+登录成功后:
+  服务器:  在自己这边记一笔 → { "abc123": {用户:小明, 角色:admin} }
+           然后 Set-Cookie: session_id=abc123  （只给一把钥匙）
+
+之后请求:
+  浏览器:  Cookie: session_id=abc123
+  服务器:  拿 abc123 去自己的记录里查 → 哦,是小明,admin
+```
+
+用户拿到的只是 `abc123` 这样一串随机字符,**篡改它毫无意义**(改成别的就查不到了)。真实信息锁在服务器的"保险柜"里,安全。
+
+### Session 的代价
+
+Session 很经典也很安全,但有个缺点:**服务器必须存储所有人的 session**。
+
+```
+用户多了 → session 数据占内存大
+多台服务器 → A 服务器存的 session,B 服务器不知道
+            (这台登录的,请求打到另一台就又不认识了)
+```
+
+要解决多服务器问题,得把 session 集中存到 Redis 等共享存储里。这带来了额外的架构复杂度。于是人们想:能不能**不让服务器存东西**?这就是 JWT 的动机。
+
+## 第四章:现代方案——JWT(自带签名的令牌)
+
+### 核心思想:信息自己带着,但盖个防伪章
+
+JWT(JSON Web Token)反其道而行:**把用户信息直接放进令牌交给用户保管,但用密码学签名防止篡改**。
+
+```
+Session: 信息在服务器,用户拿钥匙   → 服务器要存储(有状态)
+JWT:     信息在用户手里,带防伪签名 → 服务器不用存(无状态)
+```
+
+服务器不再记账,只需在收到令牌时**验证签名是否有效**。签名对了,就信任里面的信息。
+
+### JWT 的结构:三段,用点隔开
+
+一个 JWT 长这样,由 `.` 分成三部分:
+
+```
+eyJhbGciOiJIUzI1NiJ9 . eyJ1c2VyIjoi5bCP5piOIn0 . SflKxwRJSMeKKF2QT4...
+└──── Header ────┘   └──── Payload ────┘   └──── Signature ────┘
+       头部                 载荷                   签名
+```
+
+| 部分 | 内容 | 说明 |
+|------|------|------|
+| **Header 头部** | 签名算法,如 `{"alg":"HS256"}` | Base64 编码 |
+| **Payload 载荷** | 用户数据,如 `{"user":"小明","exp":...}` | Base64 编码 |
+| **Signature 签名** | 用密钥对前两部分加密生成 | **防篡改的关键** |
+
+### 关键认知:Payload 不是加密的!
+
+前两部分只是 **Base64 编码,不是加密**——任何人都能解开看到内容(可以去 jwt.io 试试)。JWT 保证的不是"保密",而是"**不可篡改**":
+
+```
+攻击者改了 Payload 里的 role=admin
+   ↓
+但他没有服务器的密钥,算不出正确的新签名
+   ↓
+服务器一验签名,对不上 → 令牌无效,拒绝
+```
+
+> 切记:**不要把密码、身份证号等敏感信息放进 JWT 的 Payload**,因为它是公开可读的。签名只防篡改,不防偷看。
+
+## 第五章:实战——用 Node.js 实现一套登录认证
+
+用 Express + jsonwebtoken 实现"登录发令牌 + 受保护接口验令牌"的完整流程。
+
+```bash
+npm install express jsonwebtoken
+```
+
+```javascript
+import express from "express";
+import jwt from "jsonwebtoken";
+
+const app = express();
+app.use(express.json());
+
+// 签名密钥:生产环境务必放环境变量,绝不能硬编码/泄露
+const SECRET = process.env.JWT_SECRET;
+
+// ===== 1. 登录:验证账号密码,签发 JWT =====
+app.post("/login", (req, res) => {
+  const { username, password } = req.body;
+
+  // 这里应查数据库校验,演示先写死
+  if (username === "xiaoming" && password === "123456") {
+    // 签发令牌:把用户信息装进 payload,设 1 小时过期
+    const token = jwt.sign(
+      { user: username, role: "user" },  // payload
+      SECRET,
+      { expiresIn: "1h" }                 // 过期时间(很重要!)
+    );
+    return res.json({ token });
+  }
+  res.status(401).json({ error: "账号或密码错误" });
+});
+
+// ===== 2. 中间件:验证请求里的 JWT =====
+function auth(req, res, next) {
+  // 约定:令牌放在 Authorization: Bearer <token>
+  const token = req.headers.authorization?.split(" ")[1];
+  if (!token) return res.status(401).json({ error: "未提供令牌" });
+
+  try {
+    // verify 会同时校验签名和过期时间,任一不过就抛错
+    req.user = jwt.verify(token, SECRET);
+    next();  // 验证通过,放行
+  } catch {
+    res.status(401).json({ error: "令牌无效或已过期" });
+  }
+}
+
+// ===== 3. 受保护接口:必须带有效令牌才能访问 =====
+app.get("/profile", auth, (req, res) => {
+  res.json({ message: `你好,${req.user.user}!`, role: req.user.role });
+});
+
+app.listen(3000, () => console.log("Listening on 3000"));
+```
+
+测试一下完整流程:
+
+```bash
+# ① 登录拿令牌
+curl -X POST localhost:3000/login \
+  -H "Content-Type: application/json" \
+  -d '{"username":"xiaoming","password":"123456"}'
+# → {"token":"eyJ..."}
+
+# ② 带令牌访问受保护接口
+curl localhost:3000/profile -H "Authorization: Bearer eyJ..."
+# → {"message":"你好,xiaoming!","role":"user"}
+
+# ③ 不带令牌 → 401 未提供令牌
+curl localhost:3000/profile
+```
+
+短短几十行,一套基于 JWT 的认证就跑通了。**整个过程服务器不存储任何 session**——这就是 JWT"无状态"的魅力。
+
+## 第六章:JWT 绕不开的难题——怎么"登出"?
+
+Session 登出很简单:服务器把那条记录删了即可。但 JWT 不存在服务器,**令牌一旦签发,在过期前都有效,没法主动作废**。用户点了"退出",那个令牌其实还能用。
+
+主流解决方案是 **双令牌机制(Access Token + Refresh Token)**:
+
+```
+Access Token  (短命,如 15 分钟):  每次请求带它,过期快 → 即使泄露危害小
+Refresh Token (长命,如 7 天):     专门用来换新的 Access Token
+
+登出时:  把 Refresh Token 拉进服务端"黑名单",
+        Access Token 反正 15 分钟就过期,危害可控
+```
+
+这样既保留了"无状态、少存储"的优点,又把"无法登出"的风险压到很小。
+
+## 第七章:Session vs JWT 怎么选
+
+| 维度 | Session | JWT |
+|------|---------|-----|
+| 状态 | 有状态(服务器存储) | 无状态(服务器不存) |
+| 扩展性 | 多服务器需共享存储 | 天然适合分布式/微服务 |
+| 登出 | 简单(删记录即可) | 麻烦(需黑名单/短过期) |
+| 安全 | 信息在服务端,更可控 | payload 公开,不能放敏感信息 |
+| 适合场景 | 传统单体 Web 应用 | 前后端分离、App、微服务、跨域 |
+
+```
+选 Session:  传统网站、对登出/吊销要求高、单体架构
+选 JWT:      前后端分离、移动 App、微服务、需要跨域/跨服务
+```
+
+> 没有绝对优劣。很多团队甚至混用:用 JWT 做无状态认证,同时用一个轻量的服务端黑名单来支持即时吊销。
+
+## 第八章:认证安全避坑清单
+
+1. **密钥(SECRET)绝不泄露、绝不硬编码**:放环境变量;泄露=任何人都能伪造令牌。
+2. **JWT 一定要设过期时间**:`expiresIn` 必填,长期有效的令牌是定时炸弹。
+3. **Payload 不放敏感信息**:它是公开可读的,别放密码、身份证、卡号。
+4. **全程 HTTPS**:令牌在网络上传输,明文 HTTP 会被中间人截获。
+5. **Cookie 加安全标记**:存令牌用 `HttpOnly`(防 JS 窃取)+ `Secure` + `SameSite`(防 CSRF)。
+6. **密码必须加盐哈希存储**:用 bcrypt 等,绝不明文存密码。
+7. **校验签名算法**:防止 `alg: none` 攻击,服务端固定校验算法,不信任令牌自报的算法。
+
+## 总结:一条线串起整个认证体系
+
+```
+HTTP 无状态        →  服务器记不住你,需要认证机制
+Cookie            →  让请求之间能携带身份标记(但明文可篡改)
+Session           →  信息存服务端,Cookie 只放钥匙(安全但有状态)
+JWT               →  信息存客户端,靠签名防篡改(无状态但难吊销)
+Access+Refresh    →  双令牌,兼顾无状态与可控性
+```
+
+身份认证的本质,是在"无记忆"的 HTTP 之上,想办法让服务器**安全地认出每一个请求背后的人**。理解了从 Cookie 到 JWT 这条演进线,你就理解了几乎所有现代 Web 登录系统的底层逻辑。
+
+建议你现在就把第五章那段代码跑起来,亲手走一遍"登录拿令牌 → 带令牌访问 → 篡改令牌被拒"的过程——动手验证一次,胜过读十遍原理。
+
+---
+
+> 本文由 AI 整理生成,代码示例为教学简化版,生产环境请结合 HTTPS、密码哈希等完整安全措施,仅供学习参考。
