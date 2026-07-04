@@ -1,0 +1,424 @@
+---
+title: "RESTful API 设计最佳实践：URL 规范、状态码与版本控制一篇讲透"
+description: "由浅入深讲解 RESTful API 设计：从 REST 架构风格的核心约束，到 URL 命名规范、HTTP 动词与状态码的合理使用，再到接口版本控制的三种主流方案，配合可运行的 Express 示例，附一份实用的 API 设计避坑清单。"
+category: tech
+tags: ["RESTful", "API设计", "HTTP", "后端开发", "Express", "最佳实践"]
+date: 2026-06-23
+draft: false
+cover: "https://images.unsplash.com/photo-1551288049-bebda4e38f71?w=1200&h=630&fit=crop"
+---
+
+写后端接口时，你是不是也遇到过这些问题：URL 路径一会儿用动词一会儿用名词、同一个接口返回的格式天天变、新版本上线旧客户端全挂了？这些问题的根源，大多是没有一套稳定的 API 设计规范。
+
+RESTful API 不是「用 GET/POST/DELETE 就叫 REST」。它背后有一套完整的架构约束，理解了这些约束，你设计的接口才会**可预测、可扩展、好维护**。这篇文章从 URL 怎么写、状态码怎么用，到版本控制怎么做，全部用可运行的代码讲清楚。
+
+## 第一章：REST 到底是什么
+
+REST（Representational State Transfer）不是协议也不是标准，而是一种**架构风格**。它由 Roy Fielding 在 2000 年的博士论文中提出，核心思想就一句话：**把后端能力抽象成「资源」，用 HTTP 自带的语义来操作这些资源**。
+
+```
+资源 = 用户、订单、文章……
+操作 = 创建、读取、更新、删除……
+HTTP 动词 = POST、GET、PUT/PATCH、DELETE
+```
+
+REST 有六大约束，但入门阶段先记住三个核心的：
+
+| 约束 | 意思 | 一句话 |
+|------|------|--------|
+| **无状态** | 服务器不存客户端上下文，每次请求都带全量信息 | 别在服务端 session 里记「用户已登录」 |
+| **统一接口** | 所有资源用统一的方式操作（URL + 动词） | `GET /users` 全世界都知道是查用户列表 |
+| **资源表述** | 客户端拿到的不是资源本身，而是它的表述（JSON/XML） | 你返回的是「用户的数据」，不是「用户那个对象」 |
+
+最重要的一条是**无状态**。这意味着你的 API 不能依赖服务器端 session——每个请求必须携带所有必要的信息（比如 token）。这也是 RESTful API 天然适合水平扩展的原因：任何一台服务器都可以处理任何请求。
+
+## 第二章：URL 怎么命名——名词复数、小写、连字符
+
+这是新手最容易出问题的地方。RESTful URL 设计的核心原则：
+
+```
+✅ 用名词（资源），不用动词
+✅ 用复数形式
+✅ 用小写字母
+✅ 单词之间用连字符（-）
+✅ 用查询参数做筛选、排序、分页
+```
+
+```text
+# 好的设计
+GET    /users                    # 用户列表
+GET    /users/42                 # 单个用户
+POST   /users                    # 创建用户
+PUT    /users/42                 # 替换用户
+PATCH  /users/42                 # 部分更新用户
+DELETE /users/42                 # 删除用户
+GET    /users/42/orders          # 用户的订单列表
+GET    /orders?status=paid       # 筛选已支付的订单
+
+# 糟糕的设计
+GET    /getUser                  # ❌ 用了动词
+POST   /createUser               # ❌ 用了动词
+GET    /user-list                # ❌ 连字符可以，但单数+不一致
+POST   /update_user              # ❌ 下划线 + 动词
+GET    /userInfo/42              # ❌ 混搭命名
+```
+
+**子资源**用嵌套 URL 表示：
+
+```text
+GET  /users/42/orders/7           # 用户 42 的订单 7
+GET  /articles/5/comments         # 文章 5 的评论列表
+```
+
+嵌套不建议超过两层。超过两层时，考虑用查询参数或展平：
+
+```text
+# 不推荐
+GET /organizations/1/projects/2/issues/3/comments
+
+# 推荐：展平，用查询参数
+GET /comments?issue_id=3
+```
+
+## 第三章：HTTP 状态码——别永远返回 200
+
+新手最容易犯的错误：不管成功还是失败，统一返回 `200 OK`，然后在响应体里自己塞一个 `code` 字段。这等于**把 HTTP 协议自带的语义浪费了**。
+
+正确的做法是让 HTTP 状态码表达「请求的结果」，响应体表达「具体的数据或错误信息」：
+
+```javascript
+// ❌ 糟糕的做法：永远 200
+app.post('/users', (req, res) => {
+  try {
+    const user = createUser(req.body);
+    res.json({ code: 200, data: user, message: 'success' });
+  } catch (err) {
+    res.json({ code: 400, data: null, message: err.message });
+  }
+});
+
+// ✅ 正确的做法：用 HTTP 状态码
+app.post('/users', (req, res) => {
+  try {
+    const user = createUser(req.body);
+    res.status(201).json({ data: user });       // 201 Created
+  } catch (err) {
+    res.status(400).json({ error: err.message }); // 400 Bad Request
+  }
+});
+```
+
+### 常用的状态码，记住这些就够了
+
+| 分类 | 状态码 | 含义 | 什么时候用 |
+|------|--------|------|-----------|
+| **成功** | 200 | OK | GET 获取成功、PUT 更新成功 |
+| | 201 | Created | POST 创建成功 |
+| | 204 | No Content | DELETE 删除成功（不需要返回体） |
+| **重定向** | 301 | Moved Permanently | 资源永久迁移 |
+| **客户端错误** | 400 | Bad Request | 参数校验失败、请求体格式错误 |
+| | 401 | Unauthorized | 未登录或 token 过期 |
+| | 403 | Forbidden | 已登录但没权限 |
+| | 404 | Not Found | 资源不存在 |
+| | 409 | Conflict | 资源冲突（如重复创建） |
+| | 422 | Unprocessable Entity | 语义错误（如邮箱格式不对） |
+| | 429 | Too Many Requests | 限流 |
+| **服务端错误** | 500 | Internal Server Error | 服务器内部异常 |
+| | 502 | Bad Gateway | 上游服务挂了 |
+| | 503 | Service Unavailable | 服务正在维护或过载 |
+
+### 错误响应体统一格式
+
+```json
+// 400 Bad Request
+{
+  "error": {
+    "code": "VALIDATION_ERROR",
+    "message": "邮箱格式不正确",
+    "details": [
+      { "field": "email", "message": "必须是有效的邮箱地址" }
+    ]
+  }
+}
+
+// 401 Unauthorized
+{
+  "error": {
+    "code": "TOKEN_EXPIRED",
+    "message": "令牌已过期，请重新登录"
+  }
+}
+```
+
+用统一的格式，客户端就能写一套通用的错误处理逻辑，而不是为每个接口单独适配。
+
+## 第四章：版本控制——三种主流方案
+
+API 一旦上线，客户端就开始依赖它。当你需要做**不兼容的变更**时（比如字段改名、删除字段），必须引入版本控制。
+
+### 方案一：URL 路径版本（最常用）
+
+```text
+GET /api/v1/users
+GET /api/v2/users
+```
+
+Express 示例：
+
+```javascript
+const v1Router = express.Router();
+const v2Router = express.Router();
+
+v1Router.get('/users', (req, res) => {
+  res.json([{ id: 1, name: 'Alice', email: 'alice@example.com' }]);
+});
+
+v2Router.get('/users', (req, res) => {
+  res.json([{ id: 1, name: 'Alice', email: 'alice@example.com', phone: null }]);
+});
+
+app.use('/api/v1', v1Router);
+app.use('/api/v2', v2Router);
+```
+
+**优点**：最直观，浏览器就能测试。**缺点**：URL 变长了，语义上资源 URL 变来变去不太 RESTful。
+
+### 方案二：请求头版本（更 RESTful）
+
+```text
+GET /api/users
+Headers: Accept: application/vnd.myapp.v2+json
+```
+
+```javascript
+app.get('/api/users', (req, res) => {
+  const version = req.headers['accept']?.includes('v2') ? 2 : 1;
+  if (version === 2) {
+    return res.json([{ id: 1, name: 'Alice', email: 'alice@example.com', phone: null }]);
+  }
+  res.json([{ id: 1, name: 'Alice', email: 'alice@example.com' }]);
+});
+```
+
+**优点**：URL 干净，更符合 REST 风格。**缺点**：浏览器不方便测，需要额外工具。
+
+### 方案三：查询参数版本（最简单）
+
+```text
+GET /api/users?version=2
+```
+
+**优点**：实现最简单。**缺点**：容易被客户端忘记传，且 URL 缓存效果差。
+
+### 建议
+
+- **对外 API**：用 URL 路径版本（v1、v2），因为最直观、调试最方便。
+- **对内微服务间调用**：用请求头版本，URL 保持干净。
+- **永远别移除旧版本**：给客户端足够的迁移时间（至少 6 个月），并在响应头加 `Sunset` 提示。
+
+## 第五章：分页、筛选、排序——用查询参数标准化
+
+列表接口几乎都需要分页和筛选。用统一的查询参数约定：
+
+```text
+GET /users?page=1&per_page=20&sort=-created_at&status=active&q=alice
+```
+
+| 参数 | 含义 | 说明 |
+|------|------|------|
+| `page` | 页码 | 从 1 开始 |
+| `per_page` | 每页条数 | 默认 20，最大 100 |
+| `sort` | 排序 | `created_at` 正序，`-created_at` 倒序 |
+| `q` | 搜索关键词 | 全文搜索时用 |
+| `status` | 筛选条件 | 字段名和值直接对应 |
+
+响应里必须包含分页信息：
+
+```json
+{
+  "data": [ ... ],
+  "pagination": {
+    "page": 1,
+    "per_page": 20,
+    "total": 156,
+    "total_pages": 8,
+    "links": {
+      "first": "/api/users?page=1",
+      "prev": null,
+      "next": "/api/users?page=2",
+      "last": "/api/users?page=8"
+    }
+  }
+}
+```
+
+## 第六章：完整示例——用 Express 实现一个 RESTful API
+
+把前面的原则拼起来，实现一个用户管理的 RESTful API：
+
+```javascript
+import express from 'express';
+
+const app = express();
+app.use(express.json());
+
+// ===== 内存存储（演示用） =====
+const users = [];
+let nextId = 1;
+
+// ===== POST /api/v1/users — 创建用户 =====
+app.post('/api/v1/users', (req, res) => {
+  const { name, email } = req.body;
+
+  // 参数校验：422 Unprocessable Entity
+  if (!name || !email) {
+    return res.status(422).json({
+      error: {
+        code: 'VALIDATION_ERROR',
+        message: 'name 和 email 不能为空',
+      },
+    });
+  }
+
+  // 重复检查：409 Conflict
+  if (users.find(u => u.email === email)) {
+    return res.status(409).json({
+      error: { code: 'DUPLICATE_EMAIL', message: '该邮箱已被注册' },
+    });
+  }
+
+  const user = { id: nextId++, name, email, createdAt: new Date().toISOString() };
+  users.push(user);
+
+  // 201 Created + 返回新资源
+  res.status(201).json({ data: user });
+});
+
+// ===== GET /api/v1/users — 用户列表（分页 + 筛选） =====
+app.get('/api/v1/users', (req, res) => {
+  let page = parseInt(req.query.page) || 1;
+  let perPage = Math.min(parseInt(req.query.per_page) || 20, 100);
+  let filtered = [...users];
+
+  // 筛选
+  if (req.query.status) {
+    filtered = filtered.filter(u => u.status === req.query.status);
+  }
+  if (req.query.q) {
+    const q = req.query.q.toLowerCase();
+    filtered = filtered.filter(u => u.name.toLowerCase().includes(q) || u.email.includes(q));
+  }
+
+  // 排序
+  if (req.query.sort) {
+    const field = req.query.sort.replace(/^-/, '');
+    const desc = req.query.sort.startsWith('-');
+    filtered.sort((a, b) => {
+      if (a[field] < b[field]) return desc ? 1 : -1;
+      if (a[field] > b[field]) return desc ? -1 : 1;
+      return 0;
+    });
+  }
+
+  // 分页
+  const total = filtered.length;
+  const totalPages = Math.ceil(total / perPage);
+  page = Math.max(1, Math.min(page, totalPages || 1));
+  const start = (page - 1) * perPage;
+  const data = filtered.slice(start, start + perPage);
+
+  res.json({
+    data,
+    pagination: {
+      page, per_page: perPage, total, total_pages: totalPages,
+      links: {
+        first: `/api/v1/users?page=1`,
+        prev: page > 1 ? `/api/v1/users?page=${page - 1}` : null,
+        next: page < totalPages ? `/api/v1/users?page=${page + 1}` : null,
+        last: `/api/v1/users?page=${totalPages || 1}`,
+      },
+    },
+  });
+});
+
+// ===== GET /api/v1/users/:id — 单个用户 =====
+app.get('/api/v1/users/:id', (req, res) => {
+  const user = users.find(u => u.id === parseInt(req.params.id));
+  if (!user) {
+    return res.status(404).json({
+      error: { code: 'NOT_FOUND', message: '用户不存在' },
+    });
+  }
+  res.json({ data: user });
+});
+
+// ===== PATCH /api/v1/users/:id — 部分更新 =====
+app.patch('/api/v1/users/:id', (req, res) => {
+  const user = users.find(u => u.id === parseInt(req.params.id));
+  if (!user) {
+    return res.status(404).json({
+      error: { code: 'NOT_FOUND', message: '用户不存在' },
+    });
+  }
+  Object.assign(user, req.body);
+  res.json({ data: user });
+});
+
+// ===== DELETE /api/v1/users/:id — 删除用户 =====
+app.delete('/api/v1/users/:id', (req, res) => {
+  const idx = users.findIndex(u => u.id === parseInt(req.params.id));
+  if (idx === -1) {
+    return res.status(404).json({
+      error: { code: 'NOT_FOUND', message: '用户不存在' },
+    });
+  }
+  users.splice(idx, 1);
+  res.status(204).send(); // 204 No Content
+});
+
+app.listen(3000, () => console.log('API running on :3000'));
+```
+
+## 第七章：HATEOAS——REST 的终极形态
+
+REST 的最后一条约束是**超媒体即应用状态引擎（HATEOAS）**，简单说就是：API 的响应里**包含下一步可以做什么的链接**，客户端不需要硬编码 URL。
+
+```json
+// GET /api/v1/users/42
+{
+  "data": {
+    "id": 42,
+    "name": "Alice",
+    "email": "alice@example.com",
+    "_links": {
+      "self": { "href": "/api/v1/users/42" },
+      "orders": { "href": "/api/v1/users/42/orders" },
+      "update": { "href": "/api/v1/users/42", "method": "PATCH" },
+      "delete": { "href": "/api/v1/users/42", "method": "DELETE" }
+    }
+  }
+}
+```
+
+实际项目中 HATEOAS 用得不多（因为客户端通常也知道 URL 规则），但特定场景下非常有用：比如 API 版本升级时，客户端跟着 `_links` 走就行，不用改代码。
+
+## 避坑清单
+
+| 坑 | 正确做法 |
+|----|---------|
+| URL 用动词 | 用名词表示资源，`POST /users` 而不是 `POST /createUser` |
+| 永远返回 200 | 让 HTTP 状态码表达语义：201 创建、204 删除、40x/50x 错误 |
+| 删除接口返回带数据的 body | 204 No Content，什么也不返回 |
+| 分页不返回总量信息 | 返回 `total`、`page`、`total_pages`、导航链接 |
+| 不做版本控制 | 改字段就发布 v2，新旧共存，给客户端迁移时间 |
+| 错误响应格式不统一 | 统一 `{ error: { code, message, details? } }` |
+| 用下划线命名 URL | 用连字符：`/order-items` 不是 `/order_items` |
+| 嵌套超过两层 | 用查询参数展平：`/comments?issue_id=3` |
+| 忽略 401 vs 403 的区别 | 401 = 未认证，403 = 已认证但没权限 |
+| 接口改了字段不通知客户端 | 用 `Sunset` 响应头标记废弃时间，文档提前更新 |
+
+## 小结
+
+RESTful API 设计的核心不是「好看」，而是**可预测**——客户端看到 `GET /users` 就知道是查列表，看到 `404` 就知道资源不存在，看到分页信息就知道怎么翻页。这种可预测性让前后端能独立演进，也让你的 API 更易于维护和扩展。
+
+设计 API 的时候，每条原则背后都对应一个实际问题：无状态帮你水平扩展，统一接口降低学习成本，状态码让错误处理标准化，版本控制让你敢放心改代码。理解了这些「为什么」，你就能做出真正好用的 API。

@@ -1,0 +1,427 @@
+---
+title: "CI/CD 入门：从「手动部署累死人」到自动化流水线，一篇讲透"
+description: "由浅入深讲解 CI/CD（持续集成/持续部署）：从手动部署的痛点说起，到 GitHub Actions 的流水线配置、自动化测试与构建、多环境部署策略，配合可运行的工作流文件实现一个完整的 CI/CD 流水线，附一份 CI/CD 避坑清单。"
+category: tech
+tags: ["CI/CD", "GitHub Actions", "DevOps", "自动化部署", "持续集成", "持续部署"]
+date: 2026-07-04
+draft: false
+cover: "https://images.unsplash.com/photo-1482938289607-e9573fc25ebb?w=1200&h=630&fit=crop"
+---
+
+你有没有经历过这种场景：每次上线前，先本地跑测试、然后手动打包、`scp` 传到服务器、SSH 连上去停服务、替换文件、重启——中间任何一个步骤出错，要么回滚重来，要么线上挂半小时。如果赶上周五下午发版，那整个周末都在提心吊胆。
+
+CI/CD 就是把这些重复的手动步骤自动化：**你只要把代码 push 到仓库，剩下的构建、测试、部署全部自动完成**。这篇文章从最基础的 CI/CD 概念讲起，到用 GitHub Actions 搭建一条完整的流水线，最后聊多环境部署和回滚策略。
+
+## 第一章：CI 和 CD 分别是什么
+
+很多人把 CI/CD 混着说，其实它们是两个概念：
+
+```text
+CI（持续集成）:
+  每次 push 代码 → 自动拉取 → 跑测试 → 构建 → 反馈结果
+  目的：尽早发现集成问题
+
+CD（持续部署/交付）:
+  CI 通过后 → 自动部署到目标环境
+  目的：让发布变成无感的自动化流程
+```
+
+```
+开发 ──push──> GitHub ──> CI: 跑测试 + 构建
+                              │
+                              ▼ (通过后)
+                         CD: 自动部署到服务器
+```
+
+### 手动部署 vs CI/CD
+
+| 步骤 | 手动部署 | CI/CD |
+|------|---------|-------|
+| 跑测试 | 本地跑，经常忘了跑 | 自动跑，不通过不让合并 |
+| 构建 | 本地构建，环境可能不一致 | 在干净的 CI 环境构建，可重复 |
+| 上传 | scp / rsync，容易传错 | 自动上传到目标服务器 |
+| 部署 | SSH 上去操作，容易出错 | 自动化脚本，可回滚 |
+| 通知 | 全靠吼 | 自动发 Slack/邮件 |
+| 耗时 | 15-30 分钟 | 2-5 分钟 |
+
+## 第二章：GitHub Actions 核心概念
+
+GitHub Actions 是目前最流行的 CI/CD 平台之一（和仓库深度集成，免费额度对个人项目完全够用）。
+
+### 核心概念
+
+```text
+Workflow（工作流）: 一个完整的自动化流程，定义在 .github/workflows/*.yml
+  ├── Event（触发事件）: 什么时候运行（push、PR、定时等）
+  ├── Job（任务）: 一组在同一个 runner 上执行的步骤
+  │   ├── Step（步骤）: 单个操作（运行命令或使用 action）
+  │   └── ...
+  └── Runner（运行器）: 执行工作流的服务器（GitHub 托管的 Ubuntu/Mac/Windows）
+```
+
+### 第一个 Workflow
+
+创建 `.github/workflows/ci.yml`：
+
+```yaml
+name: CI
+
+# 触发事件：push 到 main 分支时运行
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# 任务
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4       # 拉取代码
+      - uses: actions/setup-node@v4     # 安装 Node.js
+        with:
+          node-version: 20
+      - run: npm ci                     # 安装依赖
+      - run: npm test                   # 跑测试
+      - run: npm run build              # 构建
+```
+
+每次 push 到 main 分支时，GitHub 会自动执行这个工作流：拉代码 → 装依赖 → 跑测试 → 构建。任何一个步骤失败，工作流就标红，PR 上会显示「检查未通过」。
+
+## 第三章：实战——搭建一条完整的 Node.js CI/CD 流水线
+
+从零开始，为一个 Node.js 项目搭建完整的 CI/CD 流水线。
+
+### 项目结构
+
+```text
+my-app/
+├── .github/workflows/
+│   ├── ci.yml              # CI：测试 + 构建
+│   └── deploy.yml           # CD：部署到服务器
+├── src/
+│   └── ...
+├── package.json
+├── Dockerfile               # （可选）容器化构建
+└── deploy/
+    └── deploy.sh            # 部署脚本
+```
+
+### CI 工作流
+
+```yaml
+# .github/workflows/ci.yml
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+
+env:
+  NODE_VERSION: 20
+
+jobs:
+  lint-and-test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'          # 缓存 node_modules，加速后续运行
+
+      - run: npm ci
+      - run: npm run lint       # 代码风格检查
+      - run: npm test           # 单元测试
+      - run: npm run test:e2e   # 端到端测试
+
+      - name: 上传测试报告
+        if: always()           # 即使测试失败也上传
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: coverage/
+
+  build:
+    needs: lint-and-test      # 依赖上一个 job 通过
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - run: npm ci
+      - run: npm run build
+
+      - name: 上传构建产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-output
+          path: dist/
+```
+
+### CD 工作流（部署到服务器）
+
+```yaml
+# .github/workflows/deploy.yml
+name: Deploy
+
+on:
+  workflow_run:
+    workflows: ['CI']            # CI 通过后自动触发
+    types: [completed]
+    branches: [main]
+
+jobs:
+  deploy:
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - run: npm ci
+      - run: npm run build
+
+      - name: 部署到生产服务器
+        uses: easingthemes/ssh-deploy@v4
+        with:
+          ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
+          remote-host: ${{ secrets.DEPLOY_HOST }}
+          remote-user: ${{ secrets.DEPLOY_USER }}
+          source: 'dist/'
+          target: '/var/www/my-app/'
+
+      - name: 重启服务
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          script: |
+            cd /var/www/my-app
+            pm2 restart app || pm2 start dist/index.js --name app
+            echo "部署完成于 $(date)"
+```
+
+### 配置 Secrets
+
+上面的工作流用到了 `secrets.*`，需要在 GitHub 仓库里设置（Settings → Secrets and variables → Actions）：
+
+| Secret | 说明 |
+|--------|------|
+| `SSH_PRIVATE_KEY` | 服务器的 SSH 私钥 |
+| `DEPLOY_HOST` | 服务器 IP 或域名 |
+| `DEPLOY_USER` | SSH 用户名 |
+
+**不要**把服务器密码或密钥直接写在代码或配置文件里。
+
+### 部署脚本的另一种方式
+
+如果你不想在 YAML 里写太多部署逻辑，可以用部署脚本：
+
+```yaml
+# deploy.yml 里的 steps
+- name: 运行部署脚本
+  run: |
+    chmod +x ./deploy/deploy.sh
+    ./deploy/deploy.sh
+  env:
+    DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+    DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+    SSH_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+```
+
+```bash
+#!/bin/bash
+# deploy/deploy.sh
+
+set -e  # 任何一步失败就退出
+
+echo "=== 开始部署 ==="
+
+# 打包
+tar -czf app.tar.gz dist/ package.json
+
+# 上传
+echo "$SSH_KEY" > /tmp/deploy_key
+chmod 600 /tmp/deploy_key
+scp -i /tmp/deploy_key app.tar.gz "$DEPLOY_USER@$DEPLOY_HOST:/var/www/my-app/"
+
+# 远程执行
+ssh -i /tmp/deploy_key "$DEPLOY_USER@$DEPLOY_HOST" << 'EOF'
+  cd /var/www/my-app
+  tar -xzf app.tar.gz
+  npm install --production
+  pm2 restart app || pm2 start dist/index.js --name app
+  rm app.tar.gz
+EOF
+
+echo "=== 部署完成 ==="
+```
+
+## 第四章：多环境部署（Staging + Production）
+
+更成熟的流程是：**PR 合并到 main 自动部署到 Staging（预发布环境），手动确认后再推送到 Production**。
+
+```yaml
+name: Deploy Staging
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  deploy-staging:
+    runs-on: ubuntu-latest
+    environment: staging           # 绑定 Staging 环境
+
+    steps:
+      - uses: actions/checkout@v4
+      - run: npm ci && npm run build
+      - name: 部署到 Staging
+        run: ./deploy/deploy.sh staging  # 传不同参数
+        env:
+          HOST: ${{ secrets.STAGING_HOST }}
+          # ...
+```
+
+```yaml
+name: Deploy Production
+
+on:
+  workflow_dispatch:              # 手动触发（点击按钮）
+    inputs:
+      confirm:
+        description: '确认部署到生产环境？'
+        required: true
+        type: boolean
+
+jobs:
+  deploy-production:
+    if: ${{ github.event.inputs.confirm == 'true' }}
+    runs-on: ubuntu-latest
+    environment: production       # 绑定 Production 环境
+
+    steps:
+      - uses: actions/checkout@v4
+      - run: npm ci && npm run build
+      - name: 部署到生产
+        run: ./deploy/deploy.sh production
+        env:
+          HOST: ${{ secrets.PROD_HOST }}
+```
+
+这样配置后：
+- 每次 push 到 main → 自动部署到 Staging
+- 需要在 GitHub 页面手动点击按钮 → 部署到 Production
+- Staging 和 Production 使用不同的 Secrets，互不干扰
+
+## 第五章：回滚策略
+
+即使有 CI/CD，部署也可能出问题。你需要一个快速回滚的方案。
+
+### 方案一：保留历史版本
+
+每次部署时保留前几个版本：
+
+```bash
+# deploy.sh
+RELEASE_DIR="/var/www/my-app/releases"
+CURRENT_LINK="/var/www/my-app/current"
+
+# 部署
+tar -xzf app.tar.gz -m -C "$RELEASE_DIR/release-$(date +%Y%m%d%H%M%S)"
+ln -sfn "$RELEASE_DIR/$(ls -t $RELEASE_DIR | head -1)" "$CURRENT_LINK"
+
+# 只保留最近 5 个版本
+ls -t $RELEASE_DIR | tail -n +6 | xargs -I {} rm -rf "$RELEASE_DIR/{}"
+```
+
+```bash
+# rollback.sh
+# 回滚到上一个版本
+cd /var/www/my-app
+PREVIOUS=$(ls -t releases | head -2 | tail -1)
+ln -sfn "releases/$PREVIOUS" current
+pm2 restart app
+```
+
+### 方案二：GitHub Actions 回滚工作流
+
+```yaml
+name: Rollback
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: '回滚到哪个版本（commit SHA）'
+        required: true
+
+jobs:
+  rollback:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.version }}
+
+      - run: npm ci && npm run build
+
+      - name: 部署旧版本
+        uses: easingthemes/ssh-deploy@v4
+        with:
+          ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
+          remote-host: ${{ secrets.DEPLOY_HOST }}
+          remote-user: ${{ secrets.DEPLOY_USER }}
+          source: 'dist/'
+          target: '/var/www/my-app/current'
+
+      - name: 重启服务
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          script: pm2 restart app
+```
+
+## 避坑清单
+
+| 坑 | 正确做法 |
+|----|---------|
+| 密钥写在代码里 | 用 GitHub Secrets，永远别把密码/key 提交到仓库 |
+| CI 通过但部署失败 | 用 `workflow_run` 事件链，确保 CI 全部通过后才触发 CD |
+| 没有缓存依赖 | 配置 `cache: 'npm'` 或 Docker layer 缓存，把 2 分钟的 `npm ci` 降到 10 秒 |
+| 构建环境不一致 | 用 Docker 构建或固定 Node 版本（不要用 `latest`） |
+| 部署时不保留旧版本 | 每次部署前备份旧版本，支持一键回滚 |
+| 一个工作流做所有事 | 拆成多个小工作流：CI、CD Staging、CD Production、Rollback |
+| 手动部署到生产 | 用 `environment` + 人工审批，防止误操作 |
+| 不通知团队 | 部署成功/失败自动发 Slack/飞书消息 |
+| 测试覆盖率不足 | CI 里设覆盖率阈值，低于阈值阻止合并 |
+| 数据库变更不做迁移 | 数据库迁移和应用部署分开，先迁移再部署代码 |
+
+## 小结
+
+CI/CD 的核心价值不是「自动化」，而是**可重复、可追溯、低风险**：
+
+- **可重复**：每次构建都在相同的环境里进行，不会出现「本地能跑线上崩了」
+- **可追溯**：每次部署都有日志，谁部署的、什么时候、哪个版本，一目了然
+- **低风险**：测试自动跑、部署自动化、回滚一键化，上线不再是「赌博」
+
+配置 CI/CD 的第一步不用太复杂。今天就开始：在你的项目里加一个 `.github/workflows/ci.yml`，先让每次 push 自动跑测试和构建。等跑顺了再加自动部署。**CI/CD 不是一个项目，是一个习惯**。

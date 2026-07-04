@@ -1,0 +1,352 @@
+---
+title: "Redis 缓存实战：从「数据库被打崩了」到缓存为王，一篇讲透"
+description: "由浅入深讲解 Redis 缓存的核心知识：从缓存解决了什么问题、为什么这么快，到五种常用数据结构、过期策略、缓存雪崩/穿透/击穿的应对方案，配合可运行的 Node.js 代码实现缓存层，附一份实用避坑清单。"
+category: tech
+tags: ["Redis", "缓存", "性能优化", "后端开发", "Node.js", "高并发"]
+date: 2026-06-29
+draft: false
+cover: "https://images.unsplash.com/photo-1449614115178-cb924f730780?w=1200&h=630&fit=crop"
+---
+
+流量上来之后，你会发现一个规律：**每次数据库被压垮，背后基本都是同样的数据被反复查**。用户刷首页、查热门商品、看配置信息——这些数据几小时才变一次，但每次请求都去数据库读一遍，数据库不崩才怪。
+
+缓存就是「把经常读但不常变的数据，存到更快的地方」。Redis 是目前最流行的缓存方案，这篇文章从「缓存为什么快」说起，到数据结构和实战代码，再到三个最经典的缓存灾难（雪崩、穿透、击穿）和它们的解决方案，全部用可运行的代码讲清楚。
+
+## 第一章：为什么需要缓存
+
+先看一个血的教训。假设你的电商首页要展示热门商品，每次请求都从 MySQL 查：
+
+```javascript
+// ❌ 没有缓存：每次请求都查数据库
+async function getHotProducts() {
+  const result = await db.query(`
+    SELECT * FROM products WHERE hot = true ORDER BY sales DESC LIMIT 20
+  `);
+  return result.rows;
+}
+```
+
+100 个用户同时访问首页，数据库就要执行 100 次查询。10000 个用户就是 10000 次。如果这个查询耗时 50ms，单机 MySQL 的并发连接数很快就会被耗尽。
+
+加一层缓存之后：
+
+```
+请求 ──> 缓存有数据？──是──> 直接返回（1ms）
+              │
+              否
+              │
+              └──> 查数据库（50ms）──> 写入缓存──> 返回
+```
+
+第一次查可能还是 50ms，但后续的 9999 次都是 1ms。这就是缓存的价值：**用少量的内存，扛住大量的读请求**。
+
+## 第二章：为什么 Redis 这么快
+
+Redis 快的原因主要有三个：
+
+| 原因 | 说明 |
+|------|------|
+| **基于内存** | 数据存在 RAM 里，读写速度是磁盘的 10 万倍以上 |
+| **单线程模型** | 避免了锁竞争和上下文切换的开销 |
+| **高效的数据结构** | 底层用跳表、压缩列表等结构，针对不同场景做了极致优化 |
+
+需要强调的是 Redis 的**单线程**。虽然只有一个线程处理命令，但它用 I/O 多路复用（epoll/kqueue）同时管理成千上万的连接，所以单线程反而避免了多线程加锁的复杂度。但这也意味着**单个命令不能耗时太长**（比如 `KEYS *` 在生产环境是大忌）。
+
+## 第三章：五种常用数据结构
+
+Redis 不只「存字符串」。它提供了多种数据结构，选对了能让代码更简洁、性能更好。
+
+### 1. String — 最基础，什么都能存
+
+```bash
+SET user:42 '{"name":"Alice","email":"alice@example.com"}'
+GET user:42
+EXPIRE user:42 3600       # 1 小时后过期
+SETEX session:abc 1800 token    # 设值同时设过期时间（原子操作）
+```
+
+### 2. List — 消息队列、最新消息
+
+```bash
+LPUSH messages:order "订单#1001 已创建"    # 左侧推入
+RPUSH messages:order "订单#1001 已支付"    # 右侧推入
+LRANGE messages:order 0 -1                # 取全部
+LTRIM messages:order 0 99                 # 只保留最近 100 条
+```
+
+### 3. Set — 去重、标签、交集
+
+```bash
+SADD user:42:tags "前端" "后端" "Redis"
+SISMEMBER user:42:tags "Redis"           # 是否包含 → 1
+SINTER user:42:tags user:7:tags           # 两个用户的共同标签
+```
+
+### 4. Hash — 存对象（比 String 更省内存）
+
+```bash
+HSET user:42 name "Alice" email "alice@example.com" age 28
+HGET user:42 name                 # 只取 name 字段
+HGETALL user:42                   # 取全部字段
+```
+
+用 Hash 存对象，你想改一个字段时只需要传那个字段，不用把整个 JSON 读出来再写回去。
+
+### 5. Sorted Set — 排行榜、延时队列
+
+```bash
+ZADD leaderboard 100 "Alice" 85 "Bob" 72 "Charlie"
+ZREVRANGE leaderboard 0 2 WITHSCORES     # 前三名（分数从高到低）
+ZINCRBY leaderboard 10 "Alice"           # Alice 加 10 分
+```
+
+Sorted Set 的每个成员关联一个分数，Redis 自动按分数排序。实现排行榜、限流、延时队列都极其方便。
+
+## 第四章：Node.js 操作 Redis
+
+### 安装
+
+```bash
+npm install ioredis
+```
+
+### 连接
+
+```javascript
+import Redis from 'ioredis';
+
+const redis = new Redis({
+  host: 'localhost',
+  port: 6379,
+  retryStrategy: (times) => Math.min(times * 50, 2000), // 断线重试策略
+});
+
+redis.on('error', (err) => console.error('Redis 连接异常:', err));
+```
+
+### 基础 CRUD
+
+```javascript
+// String
+await redis.set('user:42', JSON.stringify({ name: 'Alice' }));
+await redis.expire('user:42', 3600);
+const user = JSON.parse(await redis.get('user:42') || 'null');
+
+// Hash
+await redis.hset('user:42', 'name', 'Alice', 'email', 'alice@example.com');
+const name = await redis.hget('user:42', 'name');
+
+// List
+await redis.lpush('logs', '2026-06-29 10:00:00 用户登录');
+const recentLogs = await redis.lrange('logs', 0, 9);
+
+// Sorted Set
+await redis.zadd('leaderboard', 100, 'Alice');
+const top3 = await redis.zrevrange('leaderboard', 0, 2, 'WITHSCORES');
+```
+
+### 封装缓存层
+
+实际项目里你不会直接操作 Redis，而是封装一个缓存函数：
+
+```javascript
+async function getOrSet(key, fetchFn, ttl = 3600) {
+  // 1. 尝试从缓存取
+  const cached = await redis.get(key);
+  if (cached !== null) {
+    return JSON.parse(cached);
+  }
+
+  // 2. 缓存未命中，从原始数据源取
+  const data = await fetchFn();
+
+  // 3. 写入缓存
+  await redis.setex(key, ttl, JSON.stringify(data));
+
+  return data;
+}
+
+// 使用
+const hotProducts = await getOrSet('hot:products', async () => {
+  return await db.query('SELECT * FROM products WHERE hot = true');
+}, 300); // 缓存 5 分钟
+```
+
+这样调用方不需要关心缓存的存/取逻辑，只关注业务。
+
+## 第五章：过期策略——Redis 是怎么清理过期数据的
+
+Redis 不会等过期时间到了立刻删数据。它用两种策略配合：
+
+| 策略 | 工作方式 | 优点 | 缺点 |
+|------|---------|------|------|
+| **惰性删除** | 每次读取 key 时，检查是否过期，过期则删 | 省 CPU | 过期 key 可能一直占内存 |
+| **定期删除** | 每 100ms 随机抽查一批设置了 TTL 的 key，过期则删 | 控制内存 | 不是实时清理 |
+
+所以如果你给一个 key 设了过期时间但再也没人读它，Redis 要过一段时间（定期删除周期到了）才会真正释放它。这通常不是问题，但如果你有大量过期 key 长期不被访问，及时内存会略有浪费。
+
+## 第六章：缓存雪崩、穿透、击穿——三个最经典的坑
+
+这三个问题面试必问，线上必踩。一定要分清它们的区别和解决方案。
+
+### 缓存的三种「死法」
+
+```
+雪崩：大量缓存同时过期 → 请求全打到数据库 → 数据库挂了
+穿透：查一个根本不存在的数据 → 缓存永远没有 → 每次请求都打数据库
+击穿：某个热点 key 刚好过期 → 大量请求同时涌入来重建缓存 → 数据库扛不住
+```
+
+### 6.1 缓存雪崩
+
+**场景**：首页的所有商品缓存同时设了 1 小时过期，每到整点所有缓存同时失效，所有请求全部落到数据库。
+
+**解决方案**：
+
+```javascript
+// 方案一：过期时间加随机偏移，避免同时过期
+const ttl = 3600 + Math.floor(Math.random() * 600); // 1小时 ± 10分钟
+await redis.setex(key, ttl, JSON.stringify(data));
+
+// 方案二：多级缓存（本地缓存 + Redis）
+// 用 node-cache 在应用内存里再缓一层，即使 Redis 崩了还有本地缓存
+import NodeCache from 'node-cache';
+const localCache = new NodeCache({ stdTTL: 60 }); // 本地缓存 60 秒
+```
+
+### 6.2 缓存穿透
+
+**场景**：用户查一个不存在的商品 ID（比如 `-1` 或 `999999`），缓存里没有，数据库里也没有，每次请求都穿透到数据库。
+
+**解决方案**：
+
+```javascript
+// 方案一：缓存空值（短期）
+const data = await db.query('SELECT * FROM products WHERE id = ?', [id]);
+if (!data) {
+  // 把空值也缓存起来，但 TTL 设短一点（防止数据真的有了后缓存还在）
+  await redis.setex(cacheKey, 60, JSON.stringify(null));
+} else {
+  await redis.setex(cacheKey, 3600, JSON.stringify(data));
+}
+
+// 方案二：布隆过滤器（更专业的方案）
+// 在 Redis 层之前加一层布隆过滤器判断 ID 是否存在
+// 不存在就直接返回，不用查缓存和数据库
+```
+
+### 6.3 缓存击穿
+
+**场景**：某个爆款商品的缓存过期了，同时有 1000 个用户请求这个商品，1000 个请求同时去数据库查。
+
+**解决方案**：**互斥锁**——只让一个请求去重建缓存，其他请求等待。
+
+```javascript
+async function getProductWithMutex(id) {
+  const cacheKey = `product:${id}`;
+  const lockKey = `lock:product:${id}`;
+
+  // 1. 先查缓存
+  const cached = await redis.get(cacheKey);
+  if (cached !== null) return JSON.parse(cached);
+
+  // 2. 尝试获取分布式锁（SETNX）
+  const locked = await redis.set(lockKey, '1', 'PX', 3000, 'NX'); // 3 秒自动释放
+
+  if (locked) {
+    // 3. 拿到锁：查数据库 + 设缓存
+    try {
+      const data = await db.query('SELECT * FROM products WHERE id = ?', [id]);
+      await redis.setex(cacheKey, 3600, JSON.stringify(data));
+      return data;
+    } finally {
+      await redis.del(lockKey); // 释放锁
+    }
+  } else {
+    // 4. 没拿到锁：等一会儿重试
+    await new Promise(r => setTimeout(r, 50));
+    return getProductWithMutex(id); // 递归重试
+  }
+}
+```
+
+## 第七章：其它高频实用场景
+
+### 分布式锁
+
+```javascript
+// 加锁（原子操作）
+const locked = await redis.set('lock:order:1001', process.pid, 'PX', 10000, 'NX');
+if (!locked) throw new Error('订单正在处理中');
+
+// 释放锁（用 Lua 脚本保证原子性，只释放自己的锁）
+const script = `
+  if redis.call("get", KEYS[1]) == ARGV[1] then
+    return redis.call("del", KEYS[1])
+  else
+    return 0
+  end
+`;
+await redis.eval(script, 1, 'lock:order:1001', process.pid);
+```
+
+### 限流（滑动窗口）
+
+```javascript
+async function isRateLimited(userId, limit = 100, windowSec = 60) {
+  const key = `ratelimit:${userId}`;
+  const now = Date.now();
+  const windowMs = windowSec * 1000;
+
+  // 移除窗口外的记录
+  await redis.zremrangebyscore(key, 0, now - windowMs);
+  // 检查当前窗口内请求数
+  const count = await redis.zcard(key);
+  if (count >= limit) return true;
+
+  // 记录这次请求
+  await redis.zadd(key, now, `${now}:${Math.random()}`);
+  await redis.expire(key, windowSec);
+  return false;
+}
+
+// 使用
+if (await isRateLimited(req.ip)) {
+  return res.status(429).json({ error: '请求过于频繁' });
+}
+```
+
+### 消息队列（List）
+
+```javascript
+// 生产者
+await redis.lpush('queue:email', JSON.stringify({ to: 'user@example.com', subject: '欢迎' }));
+
+// 消费者（阻塞式读取，没有消息就等着，不空转）
+while (true) {
+  const msg = await redis.brpop('queue:email', 0); // 0 = 无限等待
+  const email = JSON.parse(msg[1]);
+  await sendEmail(email);
+}
+```
+
+## 避坑清单
+
+| 坑 | 正确做法 |
+|----|---------|
+| 生产环境用 `FLUSHALL` 或 `KEYS *` | `KEYS *` 会阻塞单线程；用 `SCAN` 替代，`FLUSHALL` 非必要不用 |
+| 所有 key 设同一个过期时间 | 加随机偏移避免雪崩 |
+| 不存在的 key 反复穿透 | 缓存空值或用布隆过滤器 |
+| 热点 key 过期后大量请求打崩 DB | 用互斥锁只让一个请求重建缓存 |
+| Redis 密码设空或弱密码 | 设 `requirepass`，且只绑定内网 IP（`bind 0.0.0.0` 是灾难） |
+| 不用连接池 | ioredis 自带连接池，但记得设 `maxRetriesPerRequest` 和 `retryStrategy` |
+| 存大对象不压缩 | 超过 10KB 考虑压缩（snappy/gzip），Redis 是内存，钱要省着花 |
+| 没有监控 | 监控 `used_memory`、`hit_rate`、`connected_clients` 等核心指标 |
+| 不做数据淘汰策略 | 设 `maxmemory` + `allkeys-lru`，防止内存写爆 |
+| 不同环境用同一个 Redis | 用不同 db（`select 0/1/2`）不同 prefix，或用独立实例隔离 |
+
+## 小结
+
+回到开头的问题：缓存的核心价值不是「快」，而是**保护数据库**。用 Redis 做好缓存层，能让你的系统在高并发下依然稳定。
+
+需要记住的要点其实不多：用 `getOrSet` 模式封装缓存层、过期时间加随机偏移防雪崩、空值缓存防穿透、互斥锁防击穿。把这三个灾难级问题挡住了，你的缓存系统就成功了一大半。

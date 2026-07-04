@@ -1,0 +1,416 @@
+---
+title: "TypeScript 入门：从「JS 代码写着写着就崩了」到类型安全，一篇讲透"
+description: "由浅入深讲解 TypeScript：从「为什么需要类型」说起，到基础类型、接口、泛型、联合类型、类型守卫等核心概念，配合可运行的代码示例一步步把 JavaScript 项目迁移到 TypeScript，附一份常见类型错误避坑清单。"
+category: tech
+tags: ["TypeScript", "前端开发", "类型系统", "泛型", "JavaScript"]
+date: 2026-07-01
+draft: false
+cover: "https://images.unsplash.com/photo-1417325384643-aac51acc9e5d?w=1200&h=630&fit=crop"
+---
+
+你是不是也遇到过这种情况：JavaScript 函数跑起来好好的，突然某天线上报错 `Cannot read properties of undefined`，一查发现是接口返回的字段名变了，但代码里完全没感知。JS 太灵活了——灵活到类型错误只在运行时才能发现。
+
+TypeScript 就是给 JavaScript 加上**类型系统**：你告诉它数据长什么样，它在**编码阶段**（而不是线上运行阶段）就帮你揪出类型不匹配的问题。这篇文章从「JS 有什么问题」讲起，带你逐步掌握 TS 的核心语法，最后完成一个 JS 到 TS 的迁移实战。
+
+## 第一章：为什么需要 TypeScript
+
+看一个典型的 JavaScript 翻车现场：
+
+```javascript
+// 这个函数接收一个用户对象，返回欢迎语
+function greet(user) {
+  return `你好, ${user.nam}！你今年 ${user.age} 岁。`;
+}
+
+// 调用
+const user = { name: 'Alice', age: 28 };
+console.log(greet(user)); // 输出: "你好, undefined！你今年 28 岁。"
+```
+
+看到问题了吗？`user.nam` 拼写错了，应该是 `user.name`。但 JavaScript 只有在运行时才会告诉你——它返回了 `undefined`，没有报错，没有警告。如果这段代码藏在某个深层逻辑里，要在生产环境跑很久才会被发现。
+
+TypeScript 解决这个问题：
+
+```typescript
+// 用 interface 定义数据的「形状」
+interface User {
+  name: string;
+  age: number;
+}
+
+function greet(user: User): string {
+  return `你好, ${user.nam}！你今年 ${user.age} 岁。`; // ❌ TS 会报错: 'nam' 不存在于 User 类型
+}
+```
+
+在编辑器里，你写到 `user.nam` 的瞬间，TS 就划红线了。**把运行时错误提前到编码时发现**——这就是 TypeScript 的核心价值。
+
+## 第二章：基础类型
+
+TypeScript 的基础类型对标 JavaScript，但加了静态标注：
+
+```typescript
+// 基础类型
+let name: string = 'Alice';
+let age: number = 28;
+let isActive: boolean = true;
+
+// 数组（两种写法）
+let list: number[] = [1, 2, 3];
+let list2: Array<number> = [1, 2, 3];
+
+// 元组（固定长度、类型固定的数组）
+let pair: [string, number] = ['Alice', 28];
+
+// 枚举
+enum Status {
+  Active = 'active',
+  Inactive = 'inactive',
+  Pending = 'pending',
+}
+let s: Status = Status.Active;
+
+// any（尽量不用——回到 JS 的不安全状态）
+let loose: any = '可以是任何东西';
+loose = 42; // 不报错
+loose.doSomething(); // 运行时会崩，但 TS 不会提醒你
+
+// unknown（安全的 any——用之前需要类型检查）
+let safe: unknown = '需要先检查才能用';
+if (typeof safe === 'string') {
+  console.log(safe.toUpperCase()); // ✅ 检查过后才操作
+}
+
+// void / never
+function log(msg: string): void { console.log(msg); }
+function throwError(msg: string): never { throw new Error(msg); }
+```
+
+### 类型推断
+
+TS 很聪明，很多情况下你不用写类型，它会自动推断：
+
+```typescript
+let count = 0;     // TS 自动推断为 number
+count = 'hello';   // ❌ 报错: 不能将 string 赋值给 number
+
+const user = {     // 自动推断为 { name: string; age: number }
+  name: 'Alice',
+  age: 28,
+};
+```
+
+推荐：**能推断的类型不用写，不能推断的要写清楚**。
+
+## 第三章：接口与类型别名
+
+### Interface（接口）—— 定义对象的结构
+
+```typescript
+interface User {
+  id: number;
+  name: string;
+  email: string;
+  age?: number;         // 可选属性（有?的可以不存在）
+  readonly createdAt: Date;  // 只读属性（赋值后不能修改）
+}
+
+const user: User = {
+  id: 1,
+  name: 'Alice',
+  email: 'alice@example.com',
+  createdAt: new Date(),
+};
+
+user.createdAt = new Date(); // ❌ 报错: 只读属性不能修改
+```
+
+### 继承
+
+```typescript
+interface Animal {
+  name: string;
+  age: number;
+}
+
+interface Dog extends Animal {
+  breed: string;        // 品种
+  bark(): void;         // 方法
+}
+
+const myDog: Dog = {
+  name: '旺财',
+  age: 3,
+  breed: '金毛',
+  bark: () => console.log('汪汪！'),
+};
+```
+
+### Type（类型别名）
+
+`interface` 和 `type` 大部分功能重叠，但有一个关键区别：`interface` 可以重复声明合并，`type` 不能。
+
+```typescript
+// type 可以做的事
+type ID = number | string;           // 联合类型
+type Point = { x: number; y: number };
+type Callback = (err: Error | null, data?: any) => void;
+
+// interface 可以做的事（type 不行）
+interface User { name: string; }
+interface User { age: number; }       // 合并: User 现在有 name 和 age
+```
+
+建议：**定义对象结构用 `interface`，定义联合类型/函数签名用 `type`**。
+
+## 第四章：泛型——写一次，适应多种类型
+
+泛型是 TypeScript 里最强大的特性之一。不夸张地说：理解了泛型，你就掌握了 TS 的精髓。
+
+### 为什么要泛型
+
+```typescript
+// 不泛型: 每种类型写一个函数
+function identityNumber(arg: number): number { return arg; }
+function identityString(arg: string): string { return arg; }
+// 这样太蠢了
+
+// any: 失去了类型信息
+function identityAny(arg: any): any { return arg; }
+const result = identityAny(42);
+result.toUpperCase(); // 运行时报错，但 TS 不拦你
+
+// 泛型: 保留类型信息
+function identity<T>(arg: T): T {
+  return arg;
+}
+
+const num = identity<number>(42);  // num 是 number 类型
+const str = identity('hello');     // 类型推断: str 是 string 类型
+```
+
+### 泛型约束
+
+有时候你想限制泛型只能是有某些属性的类型：
+
+```typescript
+interface HasLength {
+  length: number;
+}
+
+// T 必须满足 HasLength 约束
+function logLength<T extends HasLength>(arg: T): T {
+  console.log(arg.length);
+  return arg;
+}
+
+logLength('hello');        // ✅ string 有 length
+logLength([1, 2, 3]);      // ✅ array 有 length
+logLength(42);             // ❌ number 没有 length
+```
+
+### 泛型接口
+
+```typescript
+interface ApiResponse<T> {
+  code: number;
+  message: string;
+  data: T;
+}
+
+// 使用
+type UserResponse = ApiResponse<{ id: number; name: string }>;
+type ListResponse<T> = ApiResponse<T[]>;
+
+const resp: UserResponse = {
+  code: 200,
+  message: 'success',
+  data: { id: 1, name: 'Alice' },
+};
+```
+
+这是真实项目中最常用的模式之一：用一个泛型接口统一所有 API 响应的结构。
+
+## 第五章：联合类型与类型守卫
+
+### 联合类型
+
+一个值可能是几种类型之一：
+
+```typescript
+type Status = 'active' | 'inactive' | 'pending';
+type Shape =
+  | { kind: 'circle'; radius: number }
+  | { kind: 'rectangle'; width: number; height: number }
+  | { kind: 'triangle'; base: number; height: number };
+```
+
+### 类型守卫（Narrowing）
+
+TS 需要你在代码里缩小类型的范围，才能安全地操作：
+
+```typescript
+function getArea(shape: Shape): number {
+  // ❌ 直接访问 shape.radius 会报错（不是所有 Shape 都有 radius）
+  // ✅ 用 switch 做类型守卫
+  switch (shape.kind) {
+    case 'circle':
+      return Math.PI * shape.radius ** 2;   // 这里 TS 知道 shape 是 circle
+    case 'rectangle':
+      return shape.width * shape.height;     // 这里 TS 知道 shape 是 rectangle
+    case 'triangle':
+      return (shape.base * shape.height) / 2;
+  }
+}
+```
+
+这种通过 `kind` 字段区分联合类型的方式叫**可辨识联合**，是 TypeScript 最常用的模式。
+
+### 自定义类型守卫
+
+```typescript
+function isString(value: unknown): value is string {
+  return typeof value === 'string';
+}
+
+function process(value: string | number) {
+  if (isString(value)) {
+    console.log(value.toUpperCase()); // ✅ 通过守卫后 TS 知道是 string
+  }
+}
+```
+
+## 第六章：实用工具类型
+
+TypeScript 内置了一些工具类型，让你的类型操作更灵活：
+
+```typescript
+interface User {
+  id: number;
+  name: string;
+  email: string;
+  age: number;
+}
+
+// Partial<T>: 所有属性变为可选
+type PartialUser = Partial<User>;
+// { id?: number; name?: string; email?: string; age?: number; }
+
+// Required<T>: 所有属性变为必填
+type RequiredUser = Required<PartialUser>;
+
+// Pick<T, K>: 只取某些属性
+type UserPreview = Pick<User, 'id' | 'name'>;
+// { id: number; name: string; }
+
+// Omit<T, K>: 排除某些属性
+type UserWithoutEmail = Omit<User, 'email'>;
+// { id: number; name: string; age: number; }
+
+// Record<K, T>: 构造一个对象类型
+type UserMap = Record<string, User>;
+// { [key: string]: User }
+
+// ReturnType<T>: 获取函数的返回值类型
+function fetchUser() { return { id: 1, name: 'Alice' }; }
+type FetchUserReturn = ReturnType<typeof fetchUser>;
+// { id: number; name: string; }
+```
+
+## 第七章：迁移实战——把 JS 项目改成 TS
+
+把现有的 JavaScript 项目迁移到 TypeScript，不需要重写。渐进式迁移就行。
+
+### 步骤 1：初始化
+
+```bash
+npm install --save-dev typescript @types/node
+npx tsc --init              # 生成 tsconfig.json
+```
+
+### 步骤 2：配置 tsconfig.json
+
+```json
+{
+  "compilerOptions": {
+    "target": "ES2020",
+    "module": "ESNext",
+    "moduleResolution": "node",
+    "strict": true,
+    "outDir": "./dist",
+    "rootDir": "./src",
+    "esModuleInterop": true,
+    "skipLibCheck": true
+  },
+  "include": ["src/**/*"]
+}
+```
+
+### 步骤 3：逐个文件迁移
+
+```javascript
+// 迁移前 (user.js)
+function createUser(data) {
+  return { id: Date.now(), ...data, createdAt: new Date() };
+}
+
+function formatUser(user) {
+  return `${user.name} (${user.email}) — 注册于 ${user.createdAt.toLocaleDateString()}`;
+}
+```
+
+```typescript
+// 迁移后 (user.ts)
+interface UserData {
+  name: string;
+  email: string;
+  age?: number;
+}
+
+interface User extends UserData {
+  id: number;
+  createdAt: Date;
+}
+
+function createUser(data: UserData): User {
+  return { id: Date.now(), ...data, createdAt: new Date() };
+}
+
+function formatUser(user: User): string {
+  return `${user.name} (${user.email}) — 注册于 ${user.createdAt.toLocaleDateString()}`;
+}
+```
+
+### 步骤 4：最激进——开 `strict` 模式
+
+```bash
+# 先开最宽松的模式，等全部迁移完再打开 strict
+npx tsc --noEmit --strict   # 看看有多少错误
+```
+
+建议的迁移步骤：
+
+1. `tsconfig.json` 先不开 `strict`
+2. 把 `.js` 改成 `.ts`
+3. 给函数参数和返回值加类型
+4. 给接口返回值定义类型
+5. 所有迁移完后再开 `strict`
+
+## 避坑清单
+
+| 坑 | 正确做法 |
+|----|---------|
+| 所有地方都用 `any` | `any` 让你回到 JS 的不安全状态，用 `unknown` 替代，或至少写清楚类型 |
+| 滥用 `as` 类型断言 | `as` 是骗 TS 的类型检查，尽量用类型守卫替代 |
+| 不给 API 响应定义类型 | 给每个接口返回值定义 `interface`，字段变化时 TS 第一时间发现 |
+| 泛型滥用 | 不要为了「通用」而写过于复杂的泛型，保持简单可读 |
+| 忽略 `strict` 模式 | `strict` 帮你发现潜在的空值问题，一开始就打开它 |
+| 用 `import x = require()` | 用 ES Module 的 `import/export` 语法 |
+| 不理解 `undefined` vs `null` | TS 严格模式下 `undefined` 和 `null` 是不同的，别混用 |
+| 写很长的类型不提取别名 | 重复的类型提取为 `type` 或 `interface`，保持 DRY |
+
+## 小结
+
+TypeScript 不是另一个语言——它是加了类型系统的 JavaScript。这层类型系统带来的收益是巨大的：**编辑器里的实时反馈**让你不用切到浏览器就能发现错误，**重构的安全性**让你敢放心改代码，**自文档化**让类型声明就是最好的注释。
+
+对于一个中等以上的项目，TypeScript 带来的生产力提升远超学习成本。如果之前写过 Java 或 C#，你会上手很快；如果是纯 JS 背景，从今天开始，给你的函数参数加上类型，慢慢你就会发现——「有类型的代码写着真踏实」。

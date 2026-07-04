@@ -1,0 +1,471 @@
+---
+title: "微服务架构入门：从「一个大项目拆成多个小服务」到第一个能跑的系统"
+description: "由浅入深讲解微服务架构：从单体应用的痛点说起，到微服务的拆分原则、服务间通信方式（REST vs gRPC vs 消息队列）、API 网关、服务发现与配置中心，配合可运行的 Node.js 代码实现一个拆分为三个服务的系统，附一份微服务避坑清单。"
+category: tech
+tags: ["微服务", "架构设计", "Node.js", "gRPC", "API网关", "分布式"]
+date: 2026-06-30
+draft: false
+cover: "https://images.unsplash.com/photo-1618401471353-b98afee0b2eb?w=1200&h=630&fit=crop"
+---
+
+项目刚起步时，一个单体应用就够了——代码都在一个仓库里，一个进程跑所有功能，本地开发 `npm start` 完事。但随着业务增长，这个「大泥球」开始暴露问题：改一行代码要重启整个服务、一个小功能出 bug 会影响全站、不同模块对资源的需求完全不一样（有的吃 CPU、有的吃内存），却必须绑在一起扩缩容。
+
+微服务就是把这些「黏在一起」的模块拆成独立的服务，每个服务独立部署、独立扩展、独立维护。但拆完之后怎么让它们协同工作？这篇文章从拆分原则开始，到通信方式、API 网关、服务发现，最后拼一个能跑的多服务系统。
+
+## 第一章：从单体到微服务——为什么要拆
+
+先看一个典型的单体应用：
+
+```text
+┌────────────────────────────────────┐
+│          单体应用 (Monolith)        │
+│                                    │
+│  ┌─────────┐  ┌────────┐          │
+│  │ 用户模块  │  │ 商品模块 │          │
+│  └─────────┘  └────────┘          │
+│  ┌─────────┐  ┌────────┐          │
+│  │ 订单模块  │  │ 支付模块 │          │
+│  └─────────┘  └────────┘          │
+│                                    │
+│  共享数据库 ──> 所有模块读同一张表    │
+└────────────────────────────────────┘
+```
+
+单体应用在小型项目里完全没问题。但当你遇到这些场景时，就该考虑拆了：
+
+| 问题 | 具体表现 |
+|------|---------|
+| **部署耦合** | 改了用户模块的一个文案，整个应用要重新构建和部署 |
+| **资源冲突** | 邮件发送吃 CPU，但它的 bloating 影响了高 IO 的 API 响应 |
+| **扩展粒度太粗** | 只有订单是瓶颈，但你不得不把整个应用一起扩容 |
+| **技术栈锁定** | 所有模块只能用同一种语言和框架 |
+| **团队协作困难** | 几十个人在一个仓库里改代码，merge 冲突是日常 |
+
+微服务解决这些问题的思路是：**按业务边界拆分，每个服务独立演进**。
+
+## 第二章：怎么拆——三个实用原则
+
+微服务拆分的核心不是「拆得越细越好」，而是**找到合适的边界**。
+
+### 原则一：按业务领域拆分（DDD）
+
+不要按「技术层」拆（Controller / Service / DAO），要按「业务领域」拆：
+
+```text
+✅ 按业务领域拆：
+  用户服务 (user-service)
+  商品服务 (product-service)
+  订单服务 (order-service)
+  支付服务 (payment-service)
+
+❌ 按技术层拆：
+  前端服务 (frontend-service)
+  后端服务 (backend-service)
+  数据库服务 (database-service)
+```
+
+### 原则二：每个服务有自己的数据库
+
+微服务的关键特征之一：**数据私有**。服务之间不能直接访问对方的数据库，只能通过 API 通信。
+
+```text
+用户服务 ──(API)──> 订单服务
+    ↑                    ↑
+    DB                   DB
+（只有用户服务能连）  （只有订单服务能连）
+```
+
+这解决了「所有模块共享一个库」的耦合问题，但也引入了新问题——跨服务的数据一致性（最终一致性 vs 分布式事务）。
+
+### 原则三：服务大小要「适度」
+
+一个常见的误区是追求「极致的微」——每个服务只做一件事，拆出几十上百个服务。但服务越多，运维复杂度就指数级上升。
+
+一个合适的粒度判断标准：**这个服务是否可以由一个小团队（2-5 人）独立维护**？如果能，粒度就差不多了。
+
+## 第三章：服务间通信——三大方式
+
+服务拆了之后，它们之间怎么聊天？有三种主流方式：
+
+### 方式一：REST / HTTP（最常用）
+
+```javascript
+// 订单服务调用用户服务获取用户信息
+async function getOrderWithUser(orderId) {
+  const order = await db.orders.findById(orderId);
+
+  // 通过 HTTP 调用用户服务
+  const res = await fetch(`http://user-service:3001/api/users/${order.userId}`);
+  const user = await res.json();
+
+  return { ...order, user };
+}
+```
+
+**优点**：简单、调试方便、技术无关。**缺点**：性能有损耗（HTTP 序列化/反序列化）、服务间调用链不好追踪。
+
+### 方式二：gRPC（高性能内部通信）
+
+gRPC 基于 Protocol Buffers，性能比 JSON 好很多，适合服务间的内部高频调用。
+
+首先定义 `.proto` 文件：
+
+```protobuf
+syntax = "proto3";
+
+service UserService {
+  rpc GetUser (GetUserRequest) returns (User);
+}
+
+message GetUserRequest {
+  int32 user_id = 1;
+}
+
+message User {
+  int32 id = 1;
+  string name = 2;
+  string email = 3;
+}
+```
+
+Node.js 客户端调用：
+
+```javascript
+const client = new UserServiceClient(
+  'user-service:50051',
+  grpc.credentials.createInsecure(),
+);
+
+client.getUser({ user_id: 42 }, (err, response) => {
+  console.log(response.name); // "Alice"
+});
+```
+
+**优点**：性能好、强类型、支持双向流。**缺点**：浏览器不支持、调试需要额外工具。
+
+### 方式三：消息队列（异步解耦）
+
+参考上一篇 RabbitMQ 的文章。适合不需要实时响应的操作：
+
+```text
+订单服务 ──发消息──> [消息队列] ──> 邮件服务
+                    └──> 物流服务
+                    └──> 统计服务
+```
+
+**选择建议**：
+- **对外 API + 简单查询**：REST
+- **内部高频调用 + 低延迟要求**：gRPC
+- **不需要立即响应 + 广播/削峰**：消息队列
+
+## 第四章：API 网关——给微服务「装个门」
+
+如果没有网关，客户端直接调用多个微服务：
+
+```text
+客户端 ──>/users ──> 用户服务
+   ├──>/products ──> 商品服务
+   └──>/orders ──> 订单服务
+```
+
+问题：客户端要知道所有服务的地址、每个服务都要处理认证和限流、无法统一做跨切面关注点。
+
+加一层 API 网关之后：
+
+```text
+                 ┌──> 用户服务
+客户端 ──> API 网关 ──> 商品服务
+                 └──> 订单服务
+```
+
+API 网关负责：路由转发、认证鉴权、限流熔断、请求/响应转换、日志采集。
+
+### 用 Express 实现一个简单的网关
+
+```javascript
+import express from 'express';
+import { createProxyMiddleware } from 'http-proxy-middleware';
+
+const app = express();
+
+// 认证中间件（网关层统一处理）
+app.use((req, res, next) => {
+  const token = req.headers['authorization'];
+  if (!token) return res.status(401).json({ error: '未登录' });
+  // 验证 token（调用认证服务或本地验证）
+  req.user = verifyToken(token);
+  next();
+});
+
+// 路由转发到各个微服务
+app.use('/api/users', createProxyMiddleware({
+  target: 'http://user-service:3001',
+  pathRewrite: { '^/api/users': '/api/users' },
+}));
+
+app.use('/api/products', createProxyMiddleware({
+  target: 'http://product-service:3002',
+  pathRewrite: { '^/api/products': '/api/products' },
+}));
+
+app.use('/api/orders', createProxyMiddleware({
+  target: 'http://order-service:3003',
+  pathRewrite: { '^/api/orders': '/api/orders' },
+}));
+
+// 限流
+import rateLimit from 'express-rate-limit';
+app.use('/api', rateLimit({
+  windowMs: 60 * 1000,
+  max: 100,
+  message: { error: '请求过于频繁' },
+}));
+
+app.listen(8080, () => console.log('API Gateway running on :8080'));
+```
+
+## 第五章：服务发现与配置中心
+
+### 服务发现
+
+在微服务架构里，服务的 IP 和端口是动态的（特别是容器化部署），不能写死在配置里。服务发现解决「怎么找到对方」的问题。
+
+```text
+服务启动 ──> 注册到注册中心（Consul / etcd / Nacos）
+服务调用 ──> 从注册中心获取目标服务的地址列表
+           ──> 负载均衡算法选一个地址 ──> 发起调用
+```
+
+Node.js 用 Consul 做服务发现：
+
+```javascript
+import Consul from 'consul';
+
+const consul = new Consul({ host: 'consul-server', port: 8500 });
+
+// 服务启动时注册
+await consul.agent.service.register({
+  name: 'user-service',
+  address: '192.168.1.10',
+  port: 3001,
+  check: { http: 'http://192.168.1.10:3001/health', interval: '10s' },
+});
+
+// 调用时获取地址
+const services = await consul.catalog.service.nodes('user-service');
+const target = services[0]; // 取第一个（实际生产会做负载均衡）
+const url = `http://${target.Address}:${target.ServicePort}/api/users/42`;
+```
+
+### 配置中心
+
+每个服务都有配置（数据库连接、Redis 地址、开关等）。不用配置中心时，这些配置散布在各个服务的环境变量或配置文件里，改一个配置要重新部署。
+
+配置中心把配置集中管理，服务启动时拉取，运行中还可以动态刷新：
+
+```javascript
+import Consul from 'consul';
+
+const consul = new Consul({ host: 'consul-server' });
+
+async function loadConfig() {
+  const result = await consul.kv.get('user-service/config');
+  const config = JSON.parse(result.Value);
+  return config;
+}
+
+// 监听配置变化
+consul.watch({
+  method: consul.kv.get,
+  options: { key: 'user-service/config' },
+}).on('change', (data) => {
+  const newConfig = JSON.parse(data.Value);
+  applyConfig(newConfig);
+});
+```
+
+## 第六章：完整实战——三服务系统
+
+把上面的知识点拼起来，实现一个简单的微服务系统：用户服务 + 商品服务 + 订单服务，通过 API 网关统一暴露。
+
+### 项目结构
+
+```text
+microservices-demo/
+├── gateway/          # API 网关（:8080）
+├── user-service/     # 用户服务（:3001）
+├── product-service/  # 商品服务（:3002）
+├── order-service/    # 订单服务（:3003）
+└── docker-compose.yml
+```
+
+### 用户服务
+
+```javascript
+import express from 'express';
+
+const app = express();
+app.use(express.json());
+
+const users = [
+  { id: 1, name: 'Alice', email: 'alice@example.com' },
+  { id: 2, name: 'Bob', email: 'bob@example.com' },
+];
+
+app.get('/api/users/:id', (req, res) => {
+  const user = users.find(u => u.id === parseInt(req.params.id));
+  if (!user) return res.status(404).json({ error: '用户不存在' });
+  res.json({ data: user });
+});
+
+app.get('/health', (req, res) => res.json({ status: 'ok' }));
+
+app.listen(3001, () => console.log('User service on :3001'));
+```
+
+### 商品服务
+
+```javascript
+import express from 'express';
+
+const app = express();
+
+const products = [
+  { id: 101, name: '无线鼠标', price: 99.00, stock: 50 },
+  { id: 102, name: '机械键盘', price: 299.00, stock: 30 },
+  { id: 103, name: '降噪耳机', price: 699.00, stock: 20 },
+];
+
+app.get('/api/products/:id', (req, res) => {
+  const product = products.find(p => p.id === parseInt(req.params.id));
+  if (!product) return res.status(404).json({ error: '商品不存在' });
+  res.json({ data: product });
+});
+
+app.get('/api/products', (req, res) => {
+  res.json({ data: products });
+});
+
+app.get('/health', (req, res) => res.json({ status: 'ok' }));
+app.listen(3002, () => console.log('Product service on :3002'));
+```
+
+### 订单服务（调用用户服务和商品服务）
+
+```javascript
+import express from 'express';
+
+const app = express();
+app.use(express.json());
+
+const orders = [];
+let nextId = 1;
+
+const USER_SERVICE = 'http://user-service:3001';
+const PRODUCT_SERVICE = 'http://product-service:3002';
+
+app.post('/api/orders', async (req, res) => {
+  const { userId, productId, quantity } = req.body;
+
+  // 调用用户服务验证用户存在
+  const userRes = await fetch(`${USER_SERVICE}/api/users/${userId}`);
+  if (!userRes.ok) return res.status(400).json({ error: '用户不存在' });
+
+  // 调用商品服务获取商品信息
+  const prodRes = await fetch(`${PRODUCT_SERVICE}/api/products/${productId}`);
+  if (!prodRes.ok) return res.status(400).json({ error: '商品不存在' });
+  const product = (await prodRes.json()).data;
+
+  const order = {
+    id: nextId++,
+    userId, productId, quantity,
+    total: product.price * quantity,
+    status: 'created',
+    createdAt: new Date().toISOString(),
+  };
+  orders.push(order);
+
+  res.status(201).json({ data: order });
+});
+
+app.get('/api/orders/:id', (req, res) => {
+  const order = orders.find(o => o.id === parseInt(req.params.id));
+  if (!order) return res.status(404).json({ error: '订单不存在' });
+  res.json({ data: order });
+});
+
+app.get('/health', (req, res) => res.json({ status: 'ok' }));
+app.listen(3003, () => console.log('Order service on :3003'));
+```
+
+### docker-compose.yml
+
+```yaml
+version: '3.8'
+services:
+  gateway:
+    build: ./gateway
+    ports:
+      - "8080:8080"
+    depends_on: [user-service, product-service, order-service]
+
+  user-service:
+    build: ./user-service
+    ports:
+      - "3001:3001"
+
+  product-service:
+    build: ./product-service
+    ports:
+      - "3002:3002"
+
+  order-service:
+    build: ./order-service
+    ports:
+      - "3003:3003"
+```
+
+跑起来之后：
+
+```bash
+docker compose up -d
+
+# 下订单：网关统一入口
+curl -X POST http://localhost:8080/api/orders \
+  -H "Content-Type: application/json" \
+  -d '{"userId":1,"productId":101,"quantity":2}'
+
+# 返回：订单服务内部调用了用户服务和商品服务
+{"data":{"id":1,"userId":1,"productId":101,"quantity":2,"total":198,"status":"created"}}
+```
+
+## 第七章：微服务的「陷阱」
+
+微服务不是银弹。在享受好处的同时，你也要为以下问题做好准备：
+
+| 问题 | 说明 | 应对 |
+|------|------|------|
+| **分布式事务** | 跨服务的数据一致性不是 ACID，是最终一致性 | 用 Saga 模式或事件溯源 |
+| **调用链追踪** | 一个请求跨 5 个服务，出问题不知道慢在哪 | 集成 OpenTelemetry 或 Jaeger |
+| **部署复杂度** | 从部署一个变成部署十几个 | CI/CD 自动化、容器化 |
+| **测试难度** | 端到端测试需要所有服务都跑起来 | 契约测试、服务虚拟化 |
+| **运维开销** | 需要服务发现、配置中心、日志聚合、监控 | 从第一天就规划好基础设施 |
+
+## 避坑清单
+
+| 坑 | 正确做法 |
+|----|---------|
+| 一上来就拆十几个服务 | 从 2-3 个开始，先走通通信和部署流程，再逐步拆分 |
+| 服务之间直接共享数据库 | 每个服务独立数据库，只通过 API 通信 |
+| 没有自动化部署就搞微服务 | 先搭 CI/CD，再拆服务，否则运维会累死 |
+| 忽视服务间调用的超时和熔断 | 用 circuit breaker 模式（如 Opossum）防止雪崩 |
+| 内部服务用 HTTP 但不做重试 | 加指数退避重试，防止临时故障导致调用失败 |
+| 不设健康检查和优雅关闭 | Kubernetes 依赖探针做滚动更新 |
+| 每个服务都用不同语言 | 除非有明确理由，否则统一技术栈降低运维成本 |
+| 网关层不做限流 | 网关是唯一入口，在网关层做限流和鉴权 |
+
+## 小结
+
+微服务的本质不是「技术」，而是**组织架构**的映射——康威定律说「系统结构会复制组织的沟通结构」。当你团队变大、业务变复杂时，微服务给了你一套有章可循的拆分和治理方法。
+
+但对于小型项目，单体应用依然是更好的选择。不要为了「赶时髦」而拆分，要让业务的复杂度驱动架构的演进。什么时候该拆？当你被单体应用的问题真正痛到的时候。

