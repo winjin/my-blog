@@ -1,0 +1,390 @@
+---
+title: "MCP 与 Skills：2026 年 AI 编程代理的两大核心扩展机制，一篇讲透"
+description: "由浅入深讲解 2026 年 AI 编程代理的两大扩展体系：MCP（模型上下文协议）和 Agent Skills。从 MCP 如何让 AI 连接外部工具、Skills 如何赋予 AI 领域专长，到它们的区别与协作方式，配合可运行的配置示例和实战场景，附一份 MCP + Skills 避坑清单。"
+category: tech
+tags: ["MCP", "Skills", "AI Agent", "Claude Code", "Cursor", "AI编程", "大模型应用"]
+date: 2026-07-07
+draft: false
+cover: "https://images.unsplash.com/photo-1495978866932-92dbc079e62e?w=1200&h=630&fit=crop"
+---
+
+如果你在用 Cursor、Claude Code、Windsurf 或任何 AI 编程代理，你一定遇到过这两个东西：**MCP** 和 **Skills**。
+
+它们是 2026 年 AI 编程代理生态里最重要的两个扩展机制，但很多人把它们的角色搞混了。
+
+- **MCP（Model Context Protocol）** 让 AI 能连接外部工具和数据源——读数据库、查 GitHub、发 Slack。
+- **Skills** 让 AI 具备特定领域的专长——怎么写前端、怎么做 SEO、怎么审查代码。
+
+一个是「连接外部世界」的协议，一个是「注入专业知识」的指令集。它们不是竞争关系，而是互补的。这篇文章把两者放在一起讲清楚。
+
+## 第一章：MCP — 给 AI 装「手脚」
+
+### 核心思路
+
+MCP 由 Anthropic 在 2024 年底开源，到 2026 年已成为 AI 工具连接的行业标准。它的核心理念很简单：**用标准化的方式让 AI 调用外部工具**。
+
+```
+没有 MCP 的时代：
+  AI 要给每个工具写一套定制集成
+  Cursor 有自己的方式读文件
+  Claude 有自己的方式调 API
+  换个模型，集成代码全部重写
+
+有 MCP 的时代：
+  一个协议，所有 AI 都能用
+  工具开发者写一次 MCP Server
+  所有 AI 客户端都能用
+```
+
+MCP 被广泛称为 **「AI 界的 USB-C」**。
+
+### 架构
+
+MCP 使用三层架构：
+
+```
+MCP Host（宿主）
+  └── MCP Client（客户端，协议层）
+       └── MCP Server（服务器，暴露能力）
+              ├── Tools（工具）— AI 可以调用的函数
+              ├── Resources（资源）— AI 可以读取的数据
+              └── Prompts（提示）— 标准化的交互模板
+```
+
+通信基于 JSON-RPC 2.0，支持 stdio（本地进程）和 HTTP/SSE（远程服务）两种传输方式。
+
+### 2026 年生态数据
+
+截至 2026 年中，MCP 生态已达到惊人的规模：
+
+| 指标 | 数据 |
+|------|------|
+| 月 SDK 下载量 | 9700 万+ |
+| GitHub Stars | 81,000+ |
+| 公开 MCP 仓库 | 12,000+ |
+| 原生支持 MCP 的客户端 | Claude Desktop、Cursor、Windsurf、VS Code (Copilot)、Cline |
+| 支持 MCP 的模型厂商 | Anthropic、OpenAI、Google、Microsoft、AWS |
+
+### 最流行的 MCP Server
+
+| 服务器 | 用途 | 推荐理由 |
+|--------|------|---------|
+| **GitHub MCP** | 管理仓库、PR、Issue | 几乎所有开发者的第一个 MCP |
+| **Filesystem MCP** | 在沙箱外读写文件 | Anthropic 官方出品 |
+| **PostgreSQL MCP** | 查询数据库、检查 Schema | 调试数据问题必备 |
+| **Playwright MCP** | 浏览器自动化、截图 | Microsoft 官方维护 |
+| **Slack MCP** | 读消息、发通知 | 团队协作必备 |
+| **AgentPatch** | 一站式集成多个工具 | 一个配置接入多种能力 |
+
+### 实际配置示例
+
+在 Cursor 里配置 MCP：
+
+```json
+// .cursor/mcp.json
+{
+  "mcpServers": {
+    "github": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-github"],
+      "env": {
+        "GITHUB_TOKEN": "ghp_..."
+      }
+    },
+    "postgres": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["-y", "@anthropic/mcp-server-postgres"],
+      "env": {
+        "DATABASE_URL": "postgresql://..."
+      }
+    }
+  }
+}
+```
+
+在 Claude Code 里配置 MCP：
+
+```bash
+# 命令行添加
+claude mcp add github npx -y @modelcontextprotocol/server-github
+
+# 查看已连接的 MCP 服务器
+claude mcp list
+```
+
+配置完成后，AI 就知道什么场景该用什么工具了——你问「最近有哪些 PR 待审」，它会自动调 GitHub MCP 来查。
+
+## 第二章：Skills — 给 AI 装「大脑」
+
+### 核心思路
+
+如果说 MCP 是给 AI 装上了「手脚」让它能做事，那 Skills 就是给 AI 装上了「领域知识」让它知道怎么做事做得更好。
+
+Skills（也叫 Agent Skills）是一套 **SKILL.md 文件**，里面包含了特定领域的专业知识、工作流、最佳实践和决策框架。当 AI 面临某个任务时，Skills 告诉它「这类事应该这么做」。
+
+```
+没有 Skills：
+  问 AI「写个登录页」
+  → 得到千篇一律的紫色渐变 + Inter 字体
+
+有 Skills（比如 Frontend Design Skill）：
+  问 AI「写个登录页」
+  → 按照设计系统的规范输出
+  → 配色来自品牌色板
+  → 组件来自项目组件库
+  → 遵循无障碍标准
+```
+
+### Skills 与其他概念的区别
+
+| 概念 | 作用 | 类比 |
+|------|------|------|
+| **Skill** | 告诉 AI「怎么做一件事」 | 操作手册 |
+| **Agent** | 告诉 AI「做什么事」 | 项目经理 |
+| **Persona** | 告诉 AI「用什么身份思考」 | 角色扮演 |
+| **Rule** | 告诉 AI「不能做什么」 | 公司制度 |
+
+### 2026 年的 Skills 生态
+
+| 指标 | 数据 |
+|------|------|
+| Anthropic 官方 Skills 仓库 Stars | 150,000+ |
+| 社区贡献 Skills | 数千个 |
+| 兼容工具 | Claude Code、Cursor、Codex CLI、Gemini CLI、Windsurf、OpenCode |
+| 最流行 Skill 安装量 | 5.7 万+（Vercel React 最佳实践） |
+
+### 最流行的 Skills
+
+| 名称 | 用途 | 来源 |
+|------|------|------|
+| **Frontend Design** | 生成高质量 UI，避免「AI 风格」 | Anthropic 官方 |
+| **Skill Creator** | 自己创建 Skills 的指南 | Anthropic 官方 |
+| **Web Design Guidelines** | 网页设计规范与最佳实践 | 社区 |
+| **Remotion Best Practices** | React 视频生成 | 社区 |
+| **SEO Optimizer** | 内容优化与关键词策略 | 社区 |
+| **Git Commit Helper** | 生成规范的 commit 信息 | 社区 |
+
+### 实际配置示例
+
+在 Claude Code 里安装 Skill：
+
+```bash
+# 从官方仓库安装
+clane skills install anthropic/frontend-design
+
+# 查看已安装的技能
+claude skills list
+```
+
+在 Cursor 里，Skills 以 `.cursor/skills/` 目录下的 `.md` 文件形式存在：
+
+```text
+.cursor/
+├── skills/
+│   ├── frontend-design.md
+│   ├── code-review.md
+│   └── git-commit.md
+└── mcp.json
+```
+
+一个典型的 SKILL.md 文件长这样：
+
+```markdown
+# Frontend Design
+
+description: 生成高质量、与众不同的前端界面，避免 AI 风格的千篇一律
+author: anthropic
+version: 1.0
+
+## 设计原则
+1. 避免紫色渐变 + 白色背景 + Inter 字体的组合——这是 AI 风格的标志
+2. 所有交互状态都要有设计：hover、active、focus、disabled、loading、empty、error
+3. 选择适合品牌调性的字体组合，不要只用系统字体
+
+## 输出规范
+- 使用 Tailwind CSS 或 CSS Modules
+- 组件类型标注 TypeScript
+- 包含响应式设计（mobile / tablet / desktop）
+```
+
+当你告诉 AI「写一个登录页面」时，它读到这个 Skill 就会按照里面的设计原则来产出，而不是回到「AI 默认风格」。
+
+## 第三章：MCP vs Skills — 区别与协作
+
+### 核心区别
+
+| 维度 | MCP | Skills |
+|------|-----|--------|
+| **解决的问题** | 连接外部工具 | 注入领域知识 |
+| **实现方式** | 代码（Server） | 文本（Markdown） |
+| **执行时机** | AI 决定调用时执行 | 加载到上下文后引导 AI |
+| **动态程度** | 动态（每次调用返回实时数据） | 静态（固定指令集） |
+| **典型用例** | 查数据库、创建 PR、发消息 | 设计规范、编码风格、工作流 |
+| **谁在维护** | 工具开发者 | 领域专家 |
+
+### 它们如何协作
+
+在实际的 AI 编程场景里，MCP 和 Skills 是同时工作的：
+
+```
+用户：帮我查一下数据库里最近的订单，发现问题后修掉
+
+AI 的思考过程：
+  1. Skills 告诉 AI：「查数据前先 EXPLAIN 分析慢查询」
+  2. MCP 执行：Connect to PostgreSQL → EXPLAIN SELECT ...
+  3. AI 发现是全表扫描
+  4. Skills 告诉 AI：「加索引前先检查现有索引」
+  5. MCP 执行：查现有索引 → 创建新索引
+  6. AI 总结变更并提交
+```
+
+Skill 在「想」的层面引导 AI 的决策，MCP 在「做」的层面提供执行能力。
+
+### 另一个具体场景：Code Review
+
+```
+MCP 做的事：
+  - 从 GitHub 拉取 PR 的 diff（GitHub MCP）
+  - 获取 CI 检查结果（GitHub MCP）
+  - 查询相关 Issue 的上下文（GitHub MCP）
+
+Skills 做的事：
+  - 告诉 AI 按照什么标准做 Code Review（Code Review Skill）
+  - 指导 AI 关注哪些方面：安全性、性能、可维护性
+  - 规定 review 输出的格式和语气
+```
+
+结果是：AI 不仅能拿到 PR 的完整上下文（MCP），还能按照你们团队的规范做审查（Skill）。
+
+## 第四章：实战——配一个「全栈开发」工作环境
+
+把学到的知识落地，配置一个能处理全栈开发任务的 AI 环境。
+
+### 1. 配置 MCP 连接外部工具
+
+```json
+// .cursor/mcp.json
+{
+  "mcpServers": {
+    "github": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-github"],
+      "env": { "GITHUB_TOKEN": "${GITHUB_TOKEN}" }
+    },
+    "postgres": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["-y", "@anthropic/mcp-server-postgres"],
+      "env": { "DATABASE_URL": "${DATABASE_URL}" }
+    },
+    "playwright": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["-y", "@playwright/mcp"]
+    }
+  }
+}
+```
+
+### 2. 安装 Skills 注入领域知识
+
+```bash
+# Claude Code
+clane skills install anthropic/frontend-design
+clane skills install anthropic/skill-creator
+clane skills install community/code-review
+
+# 或者直接从 GitHub 仓库安装
+git clone https://github.com/anthropics/skills.git
+cp -r skills/* .claude/skills/
+```
+
+### 3. 测试效果
+
+现在你可以对 AI 说这样的需求了：
+
+> 「帮我看看 GitHub 上 #42 号 Issue，那个用户反馈的登录问题，查一下数据库里相关用户的记录，写个修复方案，提交 PR。」
+
+AI 会：
+1. 用 **GitHub MCP** 获取 Issue 详情和代码
+2. 用 **PostgreSQL MCP** 查数据库确认问题
+3. 用 **Frontend Design Skill** 的原则修复前端问题
+4. 用 **Code Review Skill** 自我审查修复方案
+5. 用 **GitHub MCP** 创建 PR
+
+这一切，只需要你一句话。这就是 MCP + Skills 同时配置好的威力。
+
+## 第五章：MCP 2026 最新进展
+
+### Streamable HTTP 传输
+
+2026 年 MCP 最大的更新之一：新的传输方式，让远程 MCP 服务器的连接更稳定、延迟更低。以前 HTTP/SSE 传输在长连接断开后需要重建，新协议支持请求级别的流式响应，不需要保持持久连接。
+
+### MCP Registry
+
+类似 npm 的 MCP 服务器注册中心，让你能搜索、发现、安装社区贡献的 MCP 服务器。不再需要记住 GitHub 仓库地址。
+
+### OAuth 2.0 认证
+
+企业级安全增强：MCP 现在支持标准的 OAuth 2.0 授权流程，可以安全地接入需要认证的外部服务。
+
+### Skills 原语进规范
+
+MCP 官方路线图中，Skills 正在从社区实践变成协议原语，未来可能会在协议层面规范化 Skill 的定义和分发。
+
+## 第六章：A2A 协议（AI 智能体间通信）
+
+MCP 解决的是 **AI ↔ 工具** 的连接。2026 年还出现了另一个重要协议——**A2A（Agent-to-Agent）**，解决的是 **AI ↔ AI** 的连接。
+
+```
+MCP：AI → 工具（读数据库、写文件、调 API）
+A2A：AI → AI（任务委派、结果聚合、协作）
+```
+
+在实际架构中，两者配合使用：
+
+```text
+主 Agent（规划者）
+  ├── MCP → GitHub（获取代码）
+  ├── MCP → DB（查询数据）
+  ├── A2A → 子 Agent A（专门做前端）
+  └── A2A → 子 Agent B（专门做测试）
+```
+
+用 MCP 连接工具，用 A2A 协调多个 AI 智能体。两者不是二选一，而是互补的。
+
+## 避坑清单
+
+| 坑 | 正确做法 |
+|----|---------|
+| 搞混 MCP 和 Skills 的用途 | MCP = 连外部工具，Skills = 注入领域知识，各司其职 |
+| 装了 MCP 不配 Skill | 有工具能力但没有专家指导，AI 会「蛮干」 |
+| 装了 Skill 不配 MCP | 有专业知识但动不了外部资源，AI 只能「空谈」 |
+| MCP Server 配了太多 | 每个 MCP 都消耗上下文窗口，只配当前项目真正需要的 |
+| Skills 写得太长 | SKILL.md 超过上下文窗口会被截断，保持精简 |
+| Secrets 写在 MCP 配置里 | 用环境变量 `${VAR}` 或系统的密钥管理，不要明文写在 json 里 |
+| 装了几十个 Skill 全加载 | Skills 只有在被匹配到时才加载（懒加载），不是越多越好 |
+| 忽视 A2A | 复杂任务需要多个 Agent 协作，单 Agent 配 MCP + Skills 不够 |
+| 不更新 MCP Server | MCP 协议在快速演进，定期更新到最新版本 |
+| 生产环境用 stdio 传输 | 远程 MCP Server 用 Streamable HTTP，本地开发用 stdio |
+
+## 小结
+
+2026 年的 AI 编程代理，已经不是一个「聊天窗口 + 代码补全」了。它是一个完整的开发环境，通过 **MCP** 连接你的工具链，通过 **Skills** 理解你的领域规范。
+
+用一个公式总结：
+
+```
+AI 编程代理的能力 = 基础模型 + MCP（工具连接）+ Skills（领域知识）+ A2A（多 Agent 协作）
+```
+
+配置建议的优先级：
+1. **第一个配的 MCP Server**：GitHub（几乎是所有开发者的共同需求）
+2. **第一个配的 Skill**：Frontend Design（如果你写前端）或 Code Review（所有人都需要）
+3. **进阶**：根据项目需要加 PostgreSQL / Slack / Jira 等 MCP
+4. **高阶**：通过 A2A 构建多 Agent 协作系统
+
+MCP 和 Skills 让 AI 不再是一个「与世隔绝的聊天机器人」，而是真正融入你的开发环境、理解你的项目规范、能操作你的工具链的**团队成员**。这可能是 2026 年最重要的软件开发范式转变。
