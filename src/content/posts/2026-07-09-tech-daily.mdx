@@ -1,0 +1,542 @@
+---
+title: "AIGC 实战手册：十大主流模型与工具从入门到精通，由浅入深带你上手"
+description: "手把手教你使用 2026 年最主流的 AIGC 工具：从最简单的 ChatGPT 写文案、Midjourney 出图，到进阶的 ComfyUI 工作流、Runway 视频生成、Suno 音乐创作，再到高阶的本地部署 Stable Diffusion + LoRA 微调，每一步都有可运行的示例，附一份工具选型对比表。"
+category: tech
+tags: ["AIGC", "ChatGPT", "Midjourney", "Stable Diffusion", "ComfyUI", "Suno", "Runway", "AI工具实战"]
+date: 2026-07-09
+draft: false
+cover: "https://images.unsplash.com/photo-1479030574009-1e48577746e8?w=1200&h=630&fit=crop"
+---
+
+AIGC 的工具多到让人眼花缭乱：ChatGPT 能写文案、Midjourney 能出图、Runway 能做视频、Suno 能谱曲……每个工具都强大，但大多数人只用了它们 10% 的能力。
+
+这篇文章是一份**实操手册**，按「由浅入深、由易到难」的顺序，带你一步步上手十大主流 AIGC 工具。每个工具都有具体的操作步骤和提示词示例，从零基础到能独立完成创作。
+
+## 第一层：零基础入门（打开就能用）
+
+这一层的工具不需要安装、不需要配置、不需要 Prompt 技巧，打开浏览器就能用。
+
+### 1. ChatGPT —— 万能起点
+
+上手难度：★☆☆☆☆
+
+ChatGPT 是 AIGC 世界的「瑞士军刀」。写文案、润色、翻译、头脑风暴、写代码——几乎所有文本相关的任务都能做。
+
+**第一步：写一篇小红书风格的种草文案**
+
+```text
+提示词：
+你是一个小红书美妆博主。用「超真实体验」的风格写一篇眼影盘种草笔记。
+要求：标题要吸引人、内容要真实感知、最后加 3-5 个标签。
+字数 200 字左右，语气像朋友推荐一样自然。
+```
+
+**输出示例：**
+> 标题：这盘眼影让我被三个同事追问链接！
+> 
+> 上周随手买的，结果真香了……粉质细到用指腹抹都不飞粉，亮片色巨闪但不廉价。早上 8 点化的妆到晚上开会还在线！最绝的是那个打底色，单涂就能出门。黄皮放心冲，显白不显脏。
+> 
+> #平价眼影 #日常眼妆 #显白眼影 #新手友好 #好物分享
+
+**第二步：用「角色 + 任务 + 格式」三板斧**
+
+想让 ChatGPT 产出高质量内容，记住这个公式：
+
+```text
+角色：你是一个资深前端工程师
+任务：解释 React 的 useEffect 钩子
+格式：先用一句话总结，再用一个可运行的代码示例演示，
+      最后列出 3 个常见陷阱
+```
+
+**第三步：高级功能——GPTs + 文件上传**
+
+ChatGPT Plus 用户可以创建自定义 GPTs（相当于专属助理），也可以上传 PDF/Word/Excel 让 AI 分析内容。比如上传一份年报，让它帮你总结关键数据。
+
+---
+
+### 2. 剪映（CapCut）—— 视频创作的入门神器
+
+上手难度：★☆☆☆☆
+
+如果你在国内、要做短视频，剪映是最实用的 AI 视频工具。
+
+**图文成片（最实用的功能）**
+
+```
+步骤：
+① 打开剪映 → 选择「图文成片」
+② 粘贴你写好的文案（或用 ChatGPT 生成）
+③ 选择配音风格（推荐「解说男声」或「知性女声」）
+④ AI 自动配画面 → 手动微调不满意的片段
+⑤ 导出发布
+
+一条 1 分钟的信息流口播视频，从文案到导出 ≈ 10 分钟
+```
+
+**AI 数字人**
+
+```
+步骤：
+① 剪映 → 「数字人」功能
+② 选择形象（官方提供 20+ 虚拟形象）
+③ 输入或粘贴文案
+④ 调整语速、语气
+⑤ 一键生成口播视频
+
+适合不想真人出镜的创作者
+```
+
+---
+
+## 第二层：进阶创作（需要一点技巧）
+
+这一层的工具需要你掌握一些 Prompt 技巧和基本参数调整。
+
+### 3. Midjourney —— 图像生成的标杆
+
+上手难度：★★☆☆☆
+
+Midjourney 是目前艺术性最强的 AI 图像工具，通过 Discord 使用。
+
+**第一步：注册和基本操作**
+
+```bash
+# 1. 访问 midjourney.com 加入 Discord
+# 2. 进入任意 Newbies 频道
+# 3. 输入 /imagine 指令
+
+/imagine prompt: 一只柴犬戴着飞行员墨镜坐在咖啡店里，日落氛围，胶片质感 --ar 16:9
+```
+
+**第二步：掌握 Prompt 结构**
+
+一个高质量的 Midjourney Prompt = 主体 + 环境 + 风格 + 参数：
+
+```text
+/imagine prompt:
+  [主体] A samurai cat
+  [环境] in a neon-lit cyberpunk alley, rain, reflections on wet pavement
+  [风格] cinematic lighting, photorealistic, 8k, shot on 35mm film
+  [参数] --ar 16:9 --v 6.2 --s 250
+
+--ar 16:9   宽高比（16:9 横屏、9:16 竖屏、1:1 正方形）
+--v 6.2     模型版本（v6 最真实、v5 艺术性、niji 动漫风）
+--s 250     风格化程度（0-1000，越高越艺术，越低越忠于提示词）
+--iw 2      图像权重（使用垫图时，控制参考图的影响程度）
+```
+
+**第三步：垫图（Image to Prompt）**
+
+用一张参考图引导 AI 生成类似风格的内容：
+
+```text
+① 上传一张参考图到 Discord，右键复制图片链接
+② /imagine prompt: [图片链接] a product photo of a minimalist watch
+③ Midjourney 会参考你给的图的构图和风格
+```
+
+**第四步：Blend 混合模式**
+
+```text
+/blend
+上传两张图
+→ 选项：dimensions（1:1 / 16:9 / 9:16）
+
+适合：把产品图和背景图混合，生成产品场景图
+```
+
+---
+
+### 4. Suno —— AI 音乐创作
+
+上手难度：★★☆☆☆
+
+Suno 是目前最成熟的 AI 音乐生成工具，输入歌词和风格就能生成完整歌曲。
+
+**第一步：快速上手**
+
+```text
+提示词：
+[风格] 流行摇滚，欢快，吉他为主
+[歌词]
+(Verse 1)
+闹钟响了又关 咖啡还没泡好
+地铁挤到变形 今天又迟到了
+
+(Chorus)
+但生活还得继续 梦想还在前方
+每一条走过的路 都算数
+
+(Bridge)
+就算世界再匆忙 也要记得深呼吸
+这城市那么大 有我的位置
+
+[结构] verse chorus verse chorus bridge chorus
+```
+
+**第二步：高级参数**
+
+```text
+- 使用 Instrumental 模式生成纯音乐（无歌词）
+- 用 Extend 功能扩展已有生成
+- 用 Cover 功能把同一首歌转换成不同风格（流行 → 爵士 → 民谣）
+
+技巧：在歌词里标注 [摇滚] [轻柔] [高潮] 等情绪标记，Suno 会据此调整旋律
+```
+
+**第三步：获取商用授权**
+
+Suno Pro 会员（$10/月）生成的歌曲可用于商业用途。这是独立创作者和视频制作者的低成本音乐解决方案。
+
+---
+
+### 5. Runway —— AI 视频工具箱
+
+上手难度：★★★☆☆
+
+Runway 是目前最全面的 AI 视频编辑平台，集成了多种视频 AI 能力。
+
+**核心功能对比：**
+
+| 功能 | 用途 | 上手难度 |
+|------|------|---------|
+| **Text to Video** | 文字直接生成视频 | ★★☆☆☆ |
+| **Image to Video** | 图片动起来 | ★★☆☆☆ |
+| **Inpainting** | 视频里移除或替换物体 | ★★★☆☆ |
+| **Motion Brush** | 指定画面局部动起来 | ★★★★☆ |
+| **绿幕去除** | 一键去背景 | ★☆☆☆☆ |
+
+**Text to Video 实战：**
+
+```text
+提示词：
+cinematic shot of a lone figure walking through misty mountain pass
+golden hour lighting, epic landscape, fog rolling between peaks
+slow camera pan, 4k, documentary style
+
+参数：
+Duration: 5s / 10s（时长越长需要更多 credits）
+Motion Scale: 0-10（动作幅度）
+```
+
+**Image to Video 实战——让你的设计图动起来：**
+
+```
+① 上传一张设计图或 Midjourney 生成的概念图
+② 选择 Image to Video
+③ 写提示词描述希望发生的运动
+   （如 "ocean waves gently crashing on the shore"）
+④ 生成 → 得到一段 4 秒的视频
+
+适合：把品牌海报变成动态广告、把产品展示图变成演示视频
+```
+
+---
+
+## 第三层：高阶控制（需要学习和配置）
+
+这一层的工具需要你理解一些技术概念，比如节点、模型文件、参数调整。但掌握后能做到前两层做不到的控制力。
+
+### 6. ComfyUI —— 节点式图像工作流
+
+上手难度：★★★★☆
+
+ComfyUI 是 Stable Diffusion 的节点式 UI，用「节点连线」的方式搭建图像生成流水线。看起来复杂，但控制力极强。
+
+**为什么用 ComfyUI？**
+
+| | Midjourney | ComfyUI |
+|--|-----------|---------|
+| 控制力 | 黑盒，只能调参数 | 白盒，每个环节都可控 |
+| 可复现 | 难（同一 prompt 结果不同） | 易（工作流文件可分享复用） |
+| 组合能力 | 单模型 | 多模型串联、ControlNet、LoRA |
+| 成本 | 订阅 $10-60/月 | 免费开源，自备算力 |
+
+**第一步：安装**
+
+```bash
+# 推荐用 Stability Matrix（一键安装管理工具）
+# 或手动安装：
+git clone https://github.com/comfyanonymous/ComfyUI
+cd ComfyUI
+pip install -r requirements.txt
+python main.py
+# 浏览器打开 http://localhost:8188
+```
+
+**第二步：最简单的文生图工作流**
+
+一个 ComfyUI 工作流由节点和连线组成：
+
+```text
+[Checkpoint Loader]──→[CLIP Text Encoder]──→[KSampler]──→[VAE Decoder]──→[Save Image]
+                      ↑                                 ↑
+                [CLIP Text Encoder]                    [Empty Latent Image]
+                 (negative prompt)
+```
+
+这就是最基础的工作流，也是 ComfyUI 的默认模板。你要做的就是：
+
+```
+① 选择模型（Checkpoint）
+② 输入提示词（正面 + 负面）
+③ 设置参数（宽高、采样器、CFG）
+④ 点 Queue Prompt 生成
+```
+
+**第三步：搭建带 ControlNet 的工作流（进阶）**
+
+ControlNet 让你能用一张图控制 AI 的生成结果——比如用一张线稿控制构图、用一张深度图控制空间关系。
+
+```text
+[Load Image]──→[ControlNet Loader]──→[ControlNet Apply]──→[KSampler]
+                    ↑                         ↑
+            [Checkpoint Loader]        [CLIP Text Encoder]
+
+原理：给 AI 增加一个「引导条件」，让它按照你给的参考结构生成
+用途：将线稿上色、保持人物姿势一致、以建筑轮廓生成效果图
+```
+
+ComfyUI 的学习曲线比较陡，但一旦掌握，它能做到 Midjourney 做不到的事情：精确控制构图、批量生成、多种模型组合。
+
+---
+
+### 7. ElevenLabs —— 专业级语音合成
+
+上手难度：★★★☆☆
+
+**语音克隆**
+
+```text
+步骤：
+① 注册 ElevenLabs 账号
+② 进入 Voice Lab → Voice Cloning
+③ 上传 1-3 分钟的目标人声样本（清晰、无背景噪音）
+④ AI 自动训练声音模型（约 5 分钟）
+⑤ 用克隆的声音生成任意文本
+
+适用场景：有声书、视频配音、播客
+注意：未经授权不要克隆他人的声音
+```
+
+**语音生成 API（开发者用）**
+
+```python
+import requests
+
+url = "https://api.elevenlabs.io/v1/text-to-speech/{voice_id}"
+headers = {
+    "xi-api-key": "你的API_KEY",
+    "Content-Type": "application/json"
+}
+data = {
+    "text": "欢迎收听今天的 AI 资讯播报，我们来看几条重要新闻。",
+    "voice_settings": {
+        "stability": 0.5,
+        "similarity_boost": 0.75,
+        "speed": 1.0
+    }
+}
+response = requests.post(url, json=data, headers=headers)
+
+with open("output.mp3", "wb") as f:
+    f.write(response.content)
+```
+
+---
+
+### 8. DALL·E 3 via API —— 开发者接入
+
+上手难度：★★★☆☆
+
+如果你需要把图像生成集成到自己的应用里，OpenAI 的 API 是最直接的方式。
+
+```python
+from openai import OpenAI
+
+client = OpenAI()
+
+response = client.images.generate(
+    model="dall-e-3",
+    prompt="一个现代简约风格的书房，自然光从落地窗洒入，墙面是暖白色，有一个胡桃木书桌和一盆龟背竹",
+    size="1792x1024",  # 横屏宽幅
+    quality="hd",      # 标准/hd
+    n=1,
+)
+
+image_url = response.data[0].url
+print(f"生成完毕: {image_url}")
+```
+
+**参数详解：**
+
+```text
+size: "1024x1024" | "1792x1024" | "1024x1792"
+quality: "standard" | "hd"（HD 细节更好，消耗更多 credits）
+style: "vivid"（夸张） | "natural"（写实）
+```
+
+**与 Midjourney 的选型建议：**
+
+```
+需要快速迭代、与代码集成 → DALL·E 3 API
+需要最高艺术质量 → Midjourney
+需要精确控制 → Stable Diffusion + ComfyUI
+```
+
+---
+
+## 第四层：专业部署（自己掌控一切）
+
+这一层需要一定的技术基础，但能做到「无限量、完全可控、成本最低」。
+
+### 9. 本地部署 Stable Diffusion
+
+上手难度：★★★★★
+
+**硬件要求：**
+
+| 配置级别 | GPU | 内存 | 生成速度（512x512） |
+|---------|-----|------|-------------------|
+| 入门 | 6GB VRAM | 16GB | 5-10 秒/张 |
+| 推荐 | 12GB VRAM | 32GB | 2-5 秒/张 |
+| 理想 | 24GB VRAM | 64GB | 1-2 秒/张 |
+| Mac | M2/M3（统一内存 16GB+） | - | 10-20 秒/张 |
+
+**安装和运行：**
+
+```bash
+# 推荐用 Stability Matrix（一键安装）
+# 或手动安装 AUTOMATIC1111 WebUI
+
+git clone https://github.com/AUTOMATIC1111/stable-diffusion-webui
+cd stable-diffusion-webui
+
+# macOS
+bash webui.sh
+
+# Linux/Windows
+bash webui.sh --listen
+
+# 浏览器打开 http://localhost:7860
+```
+
+**模型下载推荐（2026）：**
+
+```bash
+# 写实风格
+wget https://huggingface.co/stable-diffusion-v3-5/stable-diffusion-3-5-large/resolve/main/sd3.5_large.safetensors
+
+# 二次元风格
+wget https://huggingface.co/rimurux/anime-model/resolve/main/anime.safetensors
+
+# 设计风格
+wget https://huggingface.co/stabilityai/stable-diffusion-3-5/resolve/main/sd3.5_medium.safetensors
+```
+
+---
+
+### 10. LoRA 微调——训练自己的风格模型
+
+上手难度：★★★★★
+
+LoRA（Low-Rank Adaptation）让你用少量图片训练一个「小模型」，控制 AI 生成特定的人物、风格或物体。
+
+**训练自己的 LoRA：**
+
+```bash
+# 1. 准备数据集：10-20 张目标物体的图片
+#    - 分辨率统一 512x512 或 768x768
+#    - 去除模糊、有水印的图片
+#    - 不要包含无关物体
+
+# 2. 用 kohya_ss 训练 GUI
+git clone https://github.com/bmaltais/kohya_ss
+cd kohya_ss
+python setup.py
+
+# 3. 训练参数（关键）
+#    - 训练轮数：10-20
+#    - 学习率：1e-4
+#    - 每张图的描述：统一加上触发器词
+#    比如你的角色叫「mycat」，每张图的标注都包含 "mycat"
+
+# 4. 训练完成后得到一个 .safetensors 文件（约 50-150MB）
+```
+
+**使用 LoRA：**
+
+```text
+在 ComfyUI 或 WebUI 中：
+① 加载 LoRA 文件（像加载模型一样）
+② 在 Prompt 中加入触发词
+③ 调整 LoRA 权重（0.5-1.5）
+
+示例 Prompt：
+(mycat:1.2) sitting on a bookshelf, watercolor style, soft lighting
+
+LoRA 权重：1.2 表示参考强度 120%
+大于 1 会过度拟合（失真），小于 0.5 效果不明显
+```
+
+**LoRA 的应用场景：**
+
+- 品牌吉祥物生成：训练品牌 IP，批量生成不同场景的插画
+- 产品一致性：同一款产品在不同背景和角度下生成
+- 个人画风迁移：把你自己的画风训练成 LoRA，让 AI 按你的风格生成
+
+---
+
+## 工具选型速查
+
+| 难度 | 工具 | 核心用途 | 费用 | 推荐指数 |
+|------|------|---------|------|---------|
+| ★☆☆ | ChatGPT | 文本生成/分析 | 免费/plus $20 | ⭐⭐⭐⭐⭐ |
+| ★☆☆ | 剪映 | AI 短视频 | 免费 | ⭐⭐⭐⭐⭐ |
+| ★★☆ | Midjourney | 高质量图像 | $10-60/月 | ⭐⭐⭐⭐⭐ |
+| ★★☆ | Suno | AI 音乐 | 免费/Pro $10 | ⭐⭐⭐⭐ |
+| ★★★ | Runway | AI 视频 | $15-30/月 | ⭐⭐⭐⭐ |
+| ★★★ | ElevenLabs | AI 配音 | 免费/Pro $5 | ⭐⭐⭐⭐⭐ |
+| ★★★ | DALL·E 3 API | 开发者集成 | 按量付费 | ⭐⭐⭐⭐ |
+| ★★★★ | ComfyUI | 精确控制出图 | 免费 | ⭐⭐⭐⭐⭐ |
+| ★★★★★ | SD 本地部署 | 无限量出图 | 免费（算力成本） | ⭐⭐⭐⭐ |
+| ★★★★★ | LoRA 训练 | 定制风格模型 | 免费（算力成本） | ⭐⭐⭐⭐ |
+
+## 实战：一个完整的跨工具创作流程
+
+把上面所有工具串起来，完成一个高质量的短视频创作：
+
+```text
+第一步（ChatGPT）：写短视频脚本
+  「写一条 60 秒的 AI 科普视频脚本，主题是『什么是 Transformer』」
+
+第二步（Midjourney）：生成视觉素材
+  「一张抽象风格的 Transformer 架构示意图，蓝色金色配色，科技感」
+  生成 4 张关键帧图片
+
+第三步（Runway）：让静态图动起来
+  把 Midjourney 生成的图用 Image to Video 变成动态片段
+
+第四步（ElevenLabs）：配音
+  把 ChatGPT 写的脚本用 ElevenLabs 生成配音
+
+第五步（剪映）：剪辑合成
+  导入视频片段 + 配音 → 自动配字幕 → 加背景音乐 → 导出
+
+总耗时：约 30 分钟（熟练后）
+传统方式：约 3-5 天（找人设计/配音/剪辑）
+```
+
+## 小结
+
+AIGC 工具的学习路径和「打游戏」很像：
+
+1. **新手村**（ChatGPT + 剪映）：零门槛上手，立刻看到效果
+2. **进阶副本**（Midjourney + Suno + Runway）：需要一点技巧，但上限高很多
+3. **高难度挑战**（ComfyUI + ElevenLabs API）：控制力大幅提升
+4. **最终 Boss**（本地部署 + LoRA 训练）：完全掌控，无限可能
+
+建议按这个顺序花时间：**先用熟第一层 → 按需求进入第二层 → 遇到瓶颈再挑战第三四层**。不是所有人都需要部署本地模型，大多数人用 Midjourney + ChatGPT + 剪映 的组合就能覆盖 90% 的创作需求。
+
+工具只是手段，创意才是核心。AIGC 不是替代创作者，而是让你用更少的时间实现更多的想法。
