@@ -1,0 +1,419 @@
+---
+title: "Kubernetes 入门：从 Docker 到 K8s，容器编排一篇讲透"
+description: "由浅入深讲解 Kubernetes 容器编排：从「为什么需要 K8s」说起，到 Pod、Deployment、Service、Ingress 四大核心概念，再到用 minikube 本地跑通一个完整的 Nginx 集群，配合 kubectl 常用命令和 YAML 配置示例，附一份 K8s 避坑清单。"
+category: tech
+tags: ["Kubernetes", "K8s", "容器编排", "Docker", "minikube", "kubectl", "云原生"]
+date: 2026-07-10
+draft: false
+cover: "https://images.unsplash.com/photo-1423784346385-c1d4dac9893a?w=1200&h=630&fit=crop"
+---
+
+Docker 解决了一个问题：**「在我电脑上好好的，怎么到你那就崩了？」**。它把应用和依赖打包在一起，确保在任何机器上运行一致。
+
+但当你真正上线后，新的问题出现了：一台服务器不够跑了怎么办？容器挂了怎么自动重启？流量来了怎么扩容？发布新版本怎么不停机更新？
+
+这就是 Kubernetes（简称 K8s）解决的问题——**容器编排**。它帮你管理成百上千个容器：自动部署、自动扩缩容、自动修复、服务发现和负载均衡。这篇文章从最朴素的需求出发，一步步把 K8s 的核心概念讲清楚，并用本地环境跑通第一个集群。
+
+## 第一章：没有 K8s 之前，Docker 遇到了什么瓶颈
+
+先看一个典型的 Docker 应用场景：你部署了一个 Web 服务。
+
+```bash
+docker run -d --name my-app -p 3000:3000 my-app:latest
+```
+
+上线初期，一台服务器够了。但当用户量增长，你发现：
+
+| 问题 | 手动怎么做 | 问题在哪 |
+|------|----------|---------|
+| 服务器不够了 | 再买一台，手动部署 | 慢，且浪费资源 |
+| 容器挂了 | 手动 `docker restart` | 半夜挂了怎么办 |
+| 流量高峰期 | 手动再跑几个容器 | 不会自动扩，高峰期手动操作来不及 |
+| 新版本上线 | 停旧容器 → 起新容器 | 有停机时间 |
+| 容器间通信 | 记 IP 地址 `docker inspect` | IP 变了就断联 |
+
+K8s 把这五个问题全自动化了。它把你的服务器集群抽象成一台「大电脑」，你告诉它「我要跑 3 个 my-app 实例，暴露 80 端口」，K8s 自动安排在哪台机器上跑、挂了自动重启、流量满了自动扩容。
+
+## 第二章：K8s 的四大核心概念
+
+### 概念一：Pod —— 最小的部署单元
+
+Pod 是 K8s 里最小的调度单位。一个 Pod 包含一个或多个容器，共享网络和存储。
+
+```yaml
+# pod.yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: my-app
+spec:
+  containers:
+    - name: app
+      image: nginx:latest
+      ports:
+        - containerPort: 80
+```
+
+```bash
+# 创建 Pod
+kubectl apply -f pod.yaml
+
+# 查看 Pod 状态
+kubectl get pods
+
+# 查看 Pod 的详细信息（包括在哪个节点上跑）
+kubectl describe pod my-app
+```
+
+**为什么需要 Pod？** 有些场景下两个容器需要紧密协作（比如一个写日志、一个跑业务），Pod 让它们共享网络和文件系统，部署和销毁都是一起的。
+
+### 概念二：Deployment —— 声明式管理
+
+Pod 是「鱼」，Deployment 是「渔网」。你直接用 Pod 的话，容器挂了就是挂了。但用 Deployment 管理 Pod，它能保证「任何时候都运行着指定数量的副本」。
+
+```yaml
+# deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: my-app
+spec:
+  replicas: 3            # 运行 3 个副本
+  selector:
+    matchLabels:
+      app: my-app
+  template:
+    metadata:
+      labels:
+        app: my-app
+    spec:
+      containers:
+        - name: app
+          image: my-app:v1
+          ports:
+            - containerPort: 3000
+```
+
+```bash
+# 创建 Deployment
+kubectl apply -f deployment.yaml
+
+# 查看 Deployment 和它管理的 Pod
+kubectl get deployments
+kubectl get pods -l app=my-app
+
+# 扩容到 5 个副本
+kubectl scale deployment my-app --replicas=5
+
+# 滚动更新到 v2（零停机）
+kubectl set image deployment/my-app app=my-app:v2
+kubectl rollout status deployment/my-app
+
+# 回滚到上一个版本
+kubectl rollout undo deployment/my-app
+```
+
+**滚动更新的过程：**
+
+```text
+旧版本：5 个 V1
+更新时：K8s 逐一替换，不会停所有服务
+  ① 启动 1 个 V2 → 确认运行正常 → 停止 1 个 V1
+  ② 启动第 2 个 V2 → 停止第 2 个 V1
+  ③ ...直到全部替换为 V2
+
+如果 V2 启动失败，K8s 自动暂停更新并回滚
+```
+
+### 概念三：Service —— 稳定的网络入口
+
+Pod 是动态的——随时可能被销毁、重建、迁移到另一台机器，每次 IP 都变。Service 给一组 Pod 提供一个**稳定的虚拟 IP 和 DNS 名称**，客户端只需访问 Service 的地址，K8s 自动转发到后端的 Pod。
+
+```yaml
+# service.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: my-app-service
+spec:
+  selector:
+    app: my-app       # 把流量转发给带这个标签的 Pod
+  ports:
+    - protocol: TCP
+      port: 80         # 外部访问端口
+      targetPort: 3000 # Pod 的端口
+  type: ClusterIP      # 集群内可访问（默认）
+```
+
+Service 的三种类型：
+
+| 类型 | 访问范围 | 适用场景 |
+|------|---------|---------|
+| **ClusterIP** | 集群内部 | 服务间调用 |
+| **NodePort** | 通过节点 IP + 端口访问外部 | 开发测试 |
+| **LoadBalancer** | 通过云厂商负载均衡器暴露到公网 | 生产环境 |
+
+### 概念四：Ingress —— 域名和路由
+
+Service 处理的是「端口映射」，Ingress 处理的是「域名和路径路由」。你想让 `api.example.com` 指向订单服务、`www.example.com` 指向前端服务——这就是 Ingress 做的事。
+
+```yaml
+# ingress.yaml
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: my-ingress
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: api.example.com
+      http:
+        paths:
+          - path: /v1/orders
+            pathType: Prefix
+            backend:
+              service:
+                name: order-service
+                port:
+                  number: 80
+    - host: www.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: frontend-service
+                port:
+                  number: 80
+```
+
+## 第三章：本地跑通第一个 K8s 集群
+
+### 安装 minikube（本地 K8s）
+
+```bash
+# macOS
+brew install minikube
+minikube start --cpus=4 --memory=8g
+
+# 验证
+kubectl get nodes
+# 输出类似：
+# NAME       STATUS   ROLES           AGE   VERSION
+# minikube   Ready    control-plane   1m    v1.32
+
+# 打开 K8s 仪表盘（可视化界面）
+minikube dashboard
+```
+
+### 部署一个 Nginx 集群
+
+```bash
+# 创建 Deployment
+kubectl create deployment nginx --image=nginx:latest --replicas=3
+
+# 暴露为 Service（端口 80）
+kubectl expose deployment nginx --port=80 --type=NodePort
+
+# 打开浏览器访问
+minikube service nginx
+
+# 查看状态
+kubectl get pods,deployment,service
+```
+
+### 用 YAML 完整部署
+
+```yaml
+# nginx-app.yaml
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: demo
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nginx
+  namespace: demo
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: nginx
+  template:
+    metadata:
+      labels:
+        app: nginx
+    spec:
+      containers:
+        - name: nginx
+          image: nginx:latest
+          ports:
+            - containerPort: 80
+          resources:
+            requests:
+              memory: "64Mi"
+              cpu: "100m"
+            limits:
+              memory: "128Mi"
+              cpu: "200m"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: nginx-service
+  namespace: demo
+spec:
+  selector:
+    app: nginx
+  ports:
+    - port: 80
+      targetPort: 80
+  type: NodePort
+```
+
+```bash
+# 应用配置
+kubectl apply -f nginx-app.yaml
+
+# 查看
+kubectl get all -n demo
+```
+
+## 第四章：K8s 常用命令速查
+
+```bash
+# ---- 集群管理 ----
+kubectl cluster-info              # 查看集群信息
+kubectl get nodes                 # 查看节点列表
+kubectl top nodes                 # 查看节点资源使用
+
+# ---- Pod 操作 ----
+kubectl get pods                  # 查看所有 Pod
+kubectl get pods -o wide          # 显示 IP 和节点
+kubectl describe pod <name>       # 查看 Pod 详细信息
+kubectl logs <name>               # 查看日志
+kubectl logs -f <name>            # 实时跟踪日志
+kubectl exec -it <name> -- sh     # 进入容器
+
+# ---- Deployment ----
+kubectl get deployments
+kubectl scale deployment <name> --replicas=5
+kubectl rollout status deployment/<name>
+kubectl rollout undo deployment/<name>
+
+# ---- Service ----
+kubectl get services
+kubectl expose deployment <name> --port=80 --type=LoadBalancer
+
+# ---- 调试 ----
+kubectl get events --sort-by='.lastTimestamp'   # 查看事件
+kubectl run debug --image=busybox -it -- sh      # 启动调试容器
+
+# ---- 删除 ----
+kubectl delete pod <name>
+kubectl delete deployment <name>
+kubectl delete service <name>
+```
+
+## 第五章：生产环境的关键配置
+
+### 健康检查（探针）
+
+告诉 K8s 什么算「容器活着」：
+
+```yaml
+spec:
+  containers:
+    - name: app
+      # ...
+      livenessProbe:        # 活？ 挂了就重启
+        httpGet:
+          path: /health
+          port: 3000
+        initialDelaySeconds: 5
+        periodSeconds: 10
+      readinessProbe:       # 准备好接收流量了？
+        httpGet:
+          path: /ready
+          port: 3000
+        initialDelaySeconds: 3
+        periodSeconds: 5
+```
+
+### 资源限制
+
+防止一个容器「吃掉」整个节点的资源：
+
+```yaml
+resources:
+  requests:       # 最低保证
+    memory: "256Mi"
+    cpu: "250m"
+  limits:         # 最高上限
+    memory: "512Mi"
+    cpu: "500m"   # 500m = 半个 CPU 核心
+```
+
+### ConfigMap 和 Secret
+
+把配置从容器镜像中抽离出来：
+
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: app-config
+data:
+  NODE_ENV: production
+  API_URL: https://api.example.com
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: app-secret
+type: Opaque
+data:
+  DB_PASSWORD: cGFzc3dvcmQxMjM=  # base64 编码
+```
+
+```yaml
+# 在 Deployment 中引用
+spec:
+  containers:
+    - name: app
+      envFrom:
+        - configMapRef:
+            name: app-config
+        - secretRef:
+            name: app-secret
+```
+
+## 避坑清单
+
+| 坑 | 正确做法 |
+|----|---------|
+| 不设资源限制 | 每个容器都要设 `requests` 和 `limits`，防止资源争抢 |
+| 不设健康检查 | 用 `livenessProbe` + `readinessProbe`，让 K8s 自动修复 |
+| 把配置写死在镜像里 | 用 ConfigMap 和 Secret 分离配置 |
+| 用 `latest` 标签 | 用具体版本号（v1.2.3），确保可追溯和回滚 |
+| 不设 Pod 反亲和 | 同一 Deployment 的 Pod 分散到不同节点，避免单点故障 |
+| 直接修改线上 Pod | 永远改 Deployment 的 YAML `kubectl apply`，别 `kubectl edit pod` |
+| 日志不用标准输出 | K8s 仅收集 stdout/stderr，日志文件要配置挂载或 sidecar |
+| 忽略 namespace | 用 namespace 隔离环境（dev/staging/prod） |
+| 不设 Pod 安全上下文 | 限制容器以非 root 用户运行 |
+| 本地跑通就以为够了 | minikube ≠ 生产集群，etcd 高可用、网络插件 CNI 选型、持久化存储都需要单独配置 |
+
+## 小结
+
+K8s 不只是一个工具，它是一种声明式的运维哲学：**你描述「想要的状态」，K8s 负责把你带到那个状态**。
+
+- 你告诉它「我要 3 个副本」→ 它保证永远有 3 个
+- 你告诉它「我要新版本」→ 它自动滚动更新，不停机
+- 你告诉它「我要 80 端口」→ 它配置网络，自动负载均衡
+
+用 Docker 是「管容器」，用 K8s 是「管集群」。对于个人项目来说 K8s 可能太重了，但一旦你管理的服务器超过 3 台，或者对「高可用」有要求，K8s 省下的时间和精力远超它的学习成本。
+
+下一步建议：在本地用 minikube 跑通第三章的示例，然后尝试用 `kubectl scale` 扩容到 5 个副本、用 `kubectl set image` 触发滚动更新——亲手操作一遍，比读十篇文章都管用。
