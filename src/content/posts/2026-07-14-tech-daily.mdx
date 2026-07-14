@@ -1,0 +1,564 @@
+---
+title: "Node.js 后端实战：用 Express + TypeScript 构建 RESTful API"
+description: "由浅入深讲解用 Node.js + Express + TypeScript 构建生产级 RESTful API 的全流程：项目搭建、路由分层、请求验证、中间件、错误处理、数据库集成（Prisma）、认证（JWT）、测试，每一步都有可运行的代码示例，附一份 Node.js 后端避坑清单。"
+category: tech
+tags: ["Node.js", "Express", "TypeScript", "RESTful API", "Prisma", "JWT", "后端"]
+date: 2026-07-14
+draft: false
+cover: "https://images.unsplash.com/photo-1517694712202-14dd9538aa97?w=1200&h=630&fit=crop"
+---
+
+Node.js 让前端开发者也能写后端，但这既是优势也是陷阱——很多人用 Node.js 写出了「前端的后端」：回调满天飞、错误处理随缘、类型全靠猜、大项目难以维护。
+
+这篇文章带你从 0 到 1 搭建一个**生产级 Node.js 后端**。
+
+技术栈：
+
+- **运行时**：Node.js 18+（支持原生 fetch）
+- **语言**：TypeScript（严谨的类型系统）
+- **框架**：Express（最流行的 Node.js 框架）
+- **数据库 ORM**：Prisma（类型安全、开发体验好）
+- **认证**：JWT（JSON Web Token）
+- **测试**：Vitest（轻量快速）
+
+## 第一章：项目搭建
+
+```bash
+mkdir my-api && cd my-api
+npm init -y
+npm install express cors helmet
+npm install -D typescript @types/express @types/node tsx vitest
+npx tsc --init
+```
+
+`tsconfig.json` 的关键配置：
+
+```json
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "outDir": "dist",
+    "rootDir": "src",
+    "strict": true,
+    "esModuleInterop": true,
+    "resolveJsonModule": true,
+    "skipLibCheck": true
+  }
+}
+```
+
+`package.json` 的脚本：
+
+```json
+{
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "test": "vitest"
+  }
+}
+```
+
+## 第二章：目录结构
+
+```text
+src/
+├── index.ts              # 应用入口
+├── app.ts                # Express 实例配置
+├── config/
+│   └── env.ts            # 环境变量
+├── middleware/
+│   ├── auth.ts           # JWT 认证中间件
+│   ├── error.ts          # 全局错误处理
+│   └── validate.ts       # 请求验证
+├── modules/
+│   ├── users/
+│   │   ├── user.routes.ts
+│   │   ├── user.controller.ts
+│   │   └── user.service.ts
+│   └── auth/
+│       ├── auth.routes.ts
+│       ├── auth.controller.ts
+│       └── auth.service.ts
+├── lib/
+│   ├── prisma.ts         # Prisma 客户端
+│   └── jwt.ts            # JWT 工具
+└── types/
+    └── index.ts          # 公共类型定义
+```
+
+## 第三章：Express 实例与入口
+
+```typescript
+// src/config/env.ts
+import 'dotenv/config';
+
+export const env = {
+  PORT: process.env.PORT ?? 3000,
+  DATABASE_URL: process.env.DATABASE_URL!,
+  JWT_SECRET: process.env.JWT_SECRET!,
+  JWT_EXPIRES_IN: process.env.JWT_EXPIRES_IN ?? '7d',
+};
+```
+
+```typescript
+// src/app.ts
+import express from 'express';
+import cors from 'cors';
+import helmet from 'helmet';
+import { errorHandler } from './middleware/error.js';
+import { userRoutes } from './modules/users/user.routes.js';
+import { authRoutes } from './modules/auth/auth.routes.js';
+
+export const app = express();
+
+// 全局中间件
+app.use(helmet());         // 安全头
+app.use(cors());           // 跨域
+app.use(express.json());   // JSON 解析
+
+// 路由
+app.use('/api/auth', authRoutes);
+app.use('/api/users', userRoutes);
+
+// 健康检查
+app.get('/api/health', (_, res) => {
+  res.json({ status: 'ok', timestamp: new Date().toISOString() });
+});
+
+// 全局错误处理（必须在路由之后）
+app.use(errorHandler);
+```
+
+```typescript
+// src/index.ts
+import { app } from './app.js';
+import { env } from './config/env.js';
+
+app.listen(env.PORT, () => {
+  console.log(`🚀 Server running on http://localhost:${env.PORT}`);
+});
+```
+
+## 第四章：路由、控制器、服务三层架构
+
+后端代码的关键在于**分层**——每层只做一件事：
+
+```
+路由（routes）    → 注册 URL 和方法，调用控制器
+控制器（controller） → 解析请求参数，调用服务层，处理响应
+服务层（service）  → 业务逻辑，操作数据库，纯函数式
+```
+
+### 路由层
+
+```typescript
+// src/modules/users/user.routes.ts
+import { Router } from 'express';
+import * as userController from './user.controller.js';
+import { authenticate } from '../../middleware/auth.js';
+import { validate } from '../../middleware/validate.js';
+import { updateUserSchema } from './user.validation.js';
+
+export const userRoutes = Router();
+
+userRoutes.get('/me', authenticate, userController.getProfile);
+userRoutes.patch('/me', authenticate, validate(updateUserSchema), userController.updateProfile);
+userRoutes.get('/', authenticate, userController.listUsers);
+```
+
+### 控制器层
+
+```typescript
+// src/modules/users/user.controller.ts
+import { Request, Response, NextFunction } from 'express';
+import * as userService from './user.service.js';
+
+export async function getProfile(req: Request, res: Response, next: NextFunction) {
+  try {
+    const userId = req.user!.id;
+    const user = await userService.getUserById(userId);
+    res.json({ data: user });
+  } catch (error) {
+    next(error);
+  }
+}
+
+export async function updateProfile(req: Request, res: Response, next: NextFunction) {
+  try {
+    const userId = req.user!.id;
+    const user = await userService.updateUser(userId, req.body);
+    res.json({ data: user });
+  } catch (error) {
+    next(error);
+  }
+}
+
+export async function listUsers(req: Request, res: Response, next: NextFunction) {
+  try {
+    const users = await userService.listUsers();
+    res.json({ data: users });
+  } catch (error) {
+    next(error);
+  }
+}
+```
+
+### 服务层
+
+```typescript
+// src/modules/users/user.service.ts
+import { prisma } from '../../lib/prisma.js';
+
+export async function getUserById(id: number) {
+  const user = await prisma.user.findUnique({
+    where: { id },
+    select: { id: true, name: true, email: true, createdAt: true },
+  });
+  if (!user) throw new NotFoundError('用户不存在');
+  return user;
+}
+
+export async function updateUser(id: number, data: { name?: string }) {
+  return prisma.user.update({
+    where: { id },
+    data,
+    select: { id: true, name: true, email: true, createdAt: true },
+  });
+}
+
+export async function listUsers() {
+  return prisma.user.findMany({
+    select: { id: true, name: true, email: true, createdAt: true },
+    orderBy: { createdAt: 'desc' },
+    take: 20,
+  });
+}
+```
+
+## 第五章：数据库集成 Prisma
+
+```bash
+npm install @prisma/client
+npm install -D prisma
+npx prisma init
+```
+
+```prisma
+// prisma/schema.prisma
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id        Int      @id @default(autoincrement())
+  email     String   @unique
+  name      String
+  password  String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Post {
+  id        Int      @id @default(autoincrement())
+  title     String
+  content   String?
+  published Boolean  @default(false)
+  authorId  Int
+  author    User     @relation(fields: [authorId], references: [id])
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+```
+
+```bash
+npx prisma migrate dev --name init
+npx prisma generate
+```
+
+```typescript
+// src/lib/prisma.ts
+import { PrismaClient } from '@prisma/client';
+
+export const prisma = new PrismaClient();
+
+// 应用关闭时断开连接
+process.on('SIGTERM', async () => {
+  await prisma.$disconnect();
+  process.exit(0);
+});
+```
+
+## 第六章：JWT 认证
+
+```typescript
+// src/lib/jwt.ts
+import jwt from 'jsonwebtoken';
+import { env } from '../config/env.js';
+
+interface TokenPayload {
+  userId: number;
+  email: string;
+}
+
+export function signToken(payload: TokenPayload): string {
+  return jwt.sign(payload, env.JWT_SECRET, {
+    expiresIn: env.JWT_EXPIRES_IN,
+  });
+}
+
+export function verifyToken(token: string): TokenPayload {
+  return jwt.verify(token, env.JWT_SECRET) as TokenPayload;
+}
+```
+
+```typescript
+// src/middleware/auth.ts
+import { Request, Response, NextFunction } from 'express';
+import { verifyToken } from '../lib/jwt.js';
+
+// 扩展 Express 的 Request 类型
+declare global {
+  namespace Express {
+    interface Request {
+      user?: { id: number; email: string };
+    }
+  }
+}
+
+export function authenticate(req: Request, res: Response, next: NextFunction) {
+  const header = req.headers.authorization;
+  if (!header?.startsWith('Bearer ')) {
+    return res.status(401).json({ error: '未提供认证令牌' });
+  }
+
+  try {
+    const token = header.slice(7);
+    const payload = verifyToken(token);
+    req.user = { id: payload.userId, email: payload.email };
+    next();
+  } catch {
+    return res.status(401).json({ error: '令牌无效或已过期' });
+  }
+}
+```
+
+```typescript
+// src/modules/auth/auth.service.ts
+import bcrypt from 'bcrypt';
+import { prisma } from '../../lib/prisma.js';
+import { signToken } from '../../lib/jwt.js';
+
+export async function register(email: string, password: string, name: string) {
+  const existing = await prisma.user.findUnique({ where: { email } });
+  if (existing) throw new ConflictError('邮箱已被注册');
+
+  const hashed = await bcrypt.hash(password, 10);
+  const user = await prisma.user.create({
+    data: { email, password: hashed, name },
+  });
+
+  const token = signToken({ userId: user.id, email: user.email });
+  return { token, user: { id: user.id, email: user.email, name: user.name } };
+}
+
+export async function login(email: string, password: string) {
+  const user = await prisma.user.findUnique({ where: { email } });
+  if (!user) throw new UnauthorizedError('邮箱或密码错误');
+
+  const valid = await bcrypt.compare(password, user.password);
+  if (!valid) throw new UnauthorizedError('邮箱或密码错误');
+
+  const token = signToken({ userId: user.id, email: user.email });
+  return { token, user: { id: user.id, email: user.email, name: user.name } };
+}
+```
+
+## 第七章：全局错误处理
+
+```typescript
+// src/middleware/error.ts
+import { Request, Response, NextFunction } from 'express';
+
+export class AppError extends Error {
+  constructor(
+    public statusCode: number,
+    message: string,
+  ) {
+    super(message);
+    this.name = this.constructor.name;
+  }
+}
+
+export class NotFoundError extends AppError {
+  constructor(message = '资源不存在') {
+    super(404, message);
+  }
+}
+
+export class UnauthorizedError extends AppError {
+  constructor(message = '未授权') {
+    super(401, message);
+  }
+}
+
+export class ConflictError extends AppError {
+  constructor(message = '资源冲突') {
+    super(409, message);
+  }
+}
+
+export class ValidationError extends AppError {
+  constructor(message = '请求参数错误') {
+    super(400, message);
+  }
+}
+
+export function errorHandler(err: Error, _req: Request, res: Response, _next: NextFunction) {
+  if (err instanceof AppError) {
+    return res.status(err.statusCode).json({ error: err.message });
+  }
+
+  // 未预料的错误
+  console.error('未处理的错误:', err);
+  return res.status(500).json({ error: '服务器内部错误' });
+}
+```
+
+## 第八章：请求验证
+
+```typescript
+// src/middleware/validate.ts
+import { Request, Response, NextFunction } from 'express';
+import { ValidationError } from './error.js';
+
+type ValidationSchema = {
+  [key: string]: (value: unknown) => string | null;
+};
+
+export function validate(schema: ValidationSchema) {
+  return (req: Request, _res: Response, next: NextFunction) => {
+    const errors: string[] = [];
+
+    for (const [field, validator] of Object.entries(schema)) {
+      const error = validator(req.body[field]);
+      if (error) errors.push(`${field}: ${error}`);
+    }
+
+    if (errors.length > 0) {
+      return next(new ValidationError(errors.join('; ')));
+    }
+
+    next();
+  };
+}
+
+// src/modules/auth/auth.validation.ts
+export const registerSchema = {
+  email: (v: unknown) => (!v ? '邮箱必填' : typeof v !== 'string' ? '邮箱格式错误' : null),
+  password: (v: unknown) =>
+    !v ? '密码必填' : typeof v !== 'string' || v.length < 6 ? '密码至少 6 位' : null,
+  name: (v: unknown) => (!v ? '名称必填' : null),
+};
+```
+
+## 第九章：测试
+
+```typescript
+// src/modules/auth/__tests__/auth.service.test.ts
+import { describe, it, expect, vi, beforeAll } from 'vitest';
+
+// Mock Prisma
+vi.mock('../../../lib/prisma.js', () => ({
+  prisma: {
+    user: {
+      findUnique: vi.fn(),
+      create: vi.fn(),
+    },
+  },
+}));
+
+import { prisma } from '../../../lib/prisma.js';
+import * as authService from '../auth.service.js';
+
+describe('AuthService', () => {
+  beforeAll(() => {
+    vi.clearAllMocks();
+  });
+
+  it('注册成功时返回 token 和用户信息', async () => {
+    vi.mocked(prisma.user.findUnique).mockResolvedValue(null);
+    vi.mocked(prisma.user.create).mockResolvedValue({
+      id: 1,
+      email: 'test@example.com',
+      name: 'Test',
+      password: '$2b$10$...',
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+
+    const result = await authService.register('test@example.com', 'password123', 'Test');
+
+    expect(result).toHaveProperty('token');
+    expect(result.user.email).toBe('test@example.com');
+  });
+
+  it('邮箱已存在时抛出冲突错误', async () => {
+    vi.mocked(prisma.user.findUnique).mockResolvedValue({
+      id: 1,
+      email: 'test@example.com',
+      name: 'Existing',
+      password: 'hash',
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+
+    await expect(
+      authService.register('test@example.com', 'password123', 'Test'),
+    ).rejects.toThrow('邮箱已被注册');
+  });
+});
+```
+
+```bash
+npm test
+```
+
+## 避坑清单
+
+| 坑 | 正确做法 |
+|----|---------|
+| 不设 strict: true | TypeScript 的 strict 模式必须开，否则 `any` 偷偷溜进来 |
+| 用 `any` 糊弄类型 | 数据库查询结果、请求体都要定义接口或用 Prisma 自动生成类型 |
+| 错误处理写在每个路由里 | 全局 `errorHandler` 中间件统一处理，路由里只 `next(error)` |
+| 密码明文存储 | 用 bcrypt 加盐哈希，永远不要自己写哈希算法 |
+| JWT 不过期 | 设短有效期（7 天），配合刷新令牌 |
+| 不验证请求参数 | 每个 POST/PATCH 接口都要验证输入（类型、长度、格式） |
+| 生产环境跑 `tsx watch` | 用 `tsc` 编译后用 `node dist/index.js` 运行 |
+| 不用环境变量 | 敏感信息（数据库密码、JWT Secret）走 `.env`，别硬编码 |
+| 忽略 Prisma 的 N+1 问题 | 用 `include` 或 `Prisma Promise` 批量加载关联数据 |
+| 不加速率限制 | 生产环境加 `express-rate-limit` 防暴力破解 |
+| 不写测试 | 核心逻辑（认证、业务服务）用单元测试覆盖，API 用集成测试 |
+
+## 小结
+
+你刚刚建了一个**分层清晰、类型安全、有错误处理、有认证、有测试**的 Node.js 后端。这不是一个「Hello World」项目，而是一个生产级模板。
+
+下一步你可以加什么：
+
+- **速率限制**：`express-rate-limit` 防止恶意请求
+- **日志**：`pino` 结构化日志，接入日志平台
+- **任务队列**：`BullMQ` 处理异步任务（发邮件、生成 PDF）
+- **文件上传**：`multer` + 云存储（S3/CDN）
+- **API 文档**：`Swagger/OpenAPI` 自动生成接口文档
+- **Docker 化**：写 `Dockerfile` + `docker-compose.yml` 一键部署
+
+Node.js 后端的核心不是框架 API——是分层思维、错误处理、类型安全和测试习惯。框架会过时，但这些习惯不会。
