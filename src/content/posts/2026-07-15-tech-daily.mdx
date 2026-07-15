@@ -1,0 +1,436 @@
+---
+title: "React 入门：函数组件 + Hooks + TypeScript，从零写一个 Todo App"
+description: "由浅入深讲解 React 的核心概念：JSX、函数组件、Props、State、useState、useEffect、自定义 Hooks。从零开始用 TypeScript 搭建一个完整的 Todo App（增删改查 + 数据持久化），配合 Vite 开发环境和可运行代码，附一份 React 避坑清单。"
+category: tech
+tags: ["React", "TypeScript", "Hooks", "前端", "Vite", "Todo App", "入门"]
+date: 2026-07-15
+draft: false
+cover: "https://images.unsplash.com/photo-1504384308090-c894fdcc538d?w=1200&h=630&fit=crop"
+---
+
+React 是 2026 年使用最广泛的前端框架之一。它的核心思想简单到可以用一句话概括：**UI = f(state)**——界面是你的状态（数据）通过函数计算出来的结果。
+
+## 第一章：项目搭建（Vite）
+
+Vite 是 2026 年最推荐的 React 开发工具，秒级启动。
+
+```bash
+npm create vite@latest my-todo -- --template react-ts
+cd my-todo
+npm install
+npm run dev
+```
+
+用 TypeScript 模板的好处：从第一天就有类型提示，减少运行时错误。
+
+项目结构：
+
+```text
+src/
+├── App.tsx          # 主组件
+├── App.css
+├── main.tsx         # 入口
+├── components/
+│   ├── TodoItem.tsx  # 单个待办项
+│   ├── TodoList.tsx  # 待办列表
+│   └── AddTodo.tsx   # 添加表单
+├── hooks/
+│   └── useTodos.ts   # 自定义 Hook
+└── types/
+    └── todo.ts       # 类型定义
+```
+
+## 第二章：类型定义
+
+先用 TypeScript 定义 Todo 的数据结构：
+
+```typescript
+// src/types/todo.ts
+export interface Todo {
+  id: string;
+  text: string;
+  completed: boolean;
+  createdAt: Date;
+}
+
+// 定义组件 Props 的类型
+export interface TodoItemProps {
+  todo: Todo;
+  onToggle: (id: string) => void;
+  onDelete: (id: string) => void;
+  onEdit: (id: string, text: string) => void;
+}
+```
+
+## 第三章：第一个组件——JSX 和 Props
+
+```tsx
+// src/components/TodoItem.tsx
+import { type TodoItemProps } from '../types/todo';
+import { useState } from 'react';
+
+export function TodoItem({ todo, onToggle, onDelete, onEdit }: TodoItemProps) {
+  const [editing, setEditing] = useState(false);
+  const [editText, setEditText] = useState(todo.text);
+
+  const handleSave = () => {
+    if (editText.trim()) {
+      onEdit(todo.id, editText.trim());
+    }
+    setEditing(false);
+  };
+
+  if (editing) {
+    return (
+      <li>
+        <input
+          value={editText}
+          onChange={(e) => setEditText(e.target.value)}
+          onBlur={handleSave}
+          onKeyDown={(e) => e.key === 'Enter' && handleSave()}
+          autoFocus
+        />
+      </li>
+    );
+  }
+
+  return (
+    <li>
+      <input
+        type="checkbox"
+        checked={todo.completed}
+        onChange={() => onToggle(todo.id)}
+      />
+      <span style={{ textDecoration: todo.completed ? 'line-through' : 'none' }}>
+        {todo.text}
+      </span>
+      <button onClick={() => setEditing(true)}>编辑</button>
+      <button onClick={() => onDelete(todo.id)}>删除</button>
+    </li>
+  );
+}
+```
+
+**关键概念：**
+
+- **Props**：组件的输入，父组件传进来，子组件不能改
+- **useState**：组件自己的状态，变了→组件重新渲染
+- **JSX**：在 JavaScript 里写 HTML。`{}` 里写 JavaScript 表达式
+
+## 第四章：列表组件——组合组件
+
+```tsx
+// src/components/TodoList.tsx
+import { TodoItem } from './TodoItem';
+import { type Todo } from '../types/todo';
+
+interface TodoListProps {
+  todos: Todo[];
+  onToggle: (id: string) => void;
+  onDelete: (id: string) => void;
+  onEdit: (id: string, text: string) => void;
+}
+
+export function TodoList({ todos, onToggle, onDelete, onEdit }: TodoListProps) {
+  if (todos.length === 0) {
+    return <p className="empty">暂无待办事项，添加一个吧 🎉</p>;
+  }
+
+  return (
+    <ul>
+      {todos.map((todo) => (
+        <TodoItem
+          key={todo.id}
+          todo={todo}
+          onToggle={onToggle}
+          onDelete={onDelete}
+          onEdit={onEdit}
+        />
+      ))}
+    </ul>
+  );
+}
+```
+
+**关键概念：**
+
+- **列表渲染**：用 `array.map()` 转成 JSX 数组
+- **key**：每个项目必须有唯一 `key`，帮 React 高效更新 DOM
+- **条件渲染**：`todos.length === 0 && <p>...</p>`
+
+## 第五章：添加表单——表单处理
+
+```tsx
+// src/components/AddTodo.tsx
+import { useState, type FormEvent } from 'react';
+
+interface AddTodoProps {
+  onAdd: (text: string) => void;
+}
+
+export function AddTodo({ onAdd }: AddTodoProps) {
+  const [text, setText] = useState('');
+
+  const handleSubmit = (e: FormEvent) => {
+    e.preventDefault();
+    if (text.trim()) {
+      onAdd(text.trim());
+      setText('');
+    }
+  };
+
+  return (
+    <form onSubmit={handleSubmit}>
+      <input
+        type="text"
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+        placeholder="输入待办事项..."
+      />
+      <button type="submit" disabled={!text.trim()}>添加</button>
+    </form>
+  );
+}
+```
+
+**关键概念：**
+
+- **受控组件**：输入框的值由 React state 控制，而非 DOM
+- **表单提交**：`onSubmit` 配合 `e.preventDefault()` 防止页面刷新
+
+## 第六章：自定义 Hook——抽离业务逻辑
+
+把所有 Todo 的逻辑从组件中抽离出来，放到自定义 Hook 里：
+
+```typescript
+// src/hooks/useTodos.ts
+import { useState, useEffect, useCallback } from 'react';
+import { type Todo } from '../types/todo';
+
+// 从 localStorage 加载
+function loadTodos(): Todo[] {
+  const stored = localStorage.getItem('todos');
+  if (!stored) return [];
+  try {
+    return JSON.parse(stored);
+  } catch {
+    return [];
+  }
+}
+
+export function useTodos() {
+  const [todos, setTodos] = useState<Todo[]>(loadTodos);
+
+  // 数据变化时自动保存到 localStorage
+  useEffect(() => {
+    localStorage.setItem('todos', JSON.stringify(todos));
+  }, [todos]);
+
+  const addTodo = useCallback((text: string) => {
+    setTodos((prev) => [
+      {
+        id: crypto.randomUUID(),
+        text,
+        completed: false,
+        createdAt: new Date(),
+      },
+      ...prev,
+    ]);
+  }, []);
+
+  const toggleTodo = useCallback((id: string) => {
+    setTodos((prev) =>
+      prev.map((todo) =>
+        todo.id === id ? { ...todo, completed: !todo.completed } : todo
+      )
+    );
+  }, []);
+
+  const deleteTodo = useCallback((id: string) => {
+    setTodos((prev) => prev.filter((todo) => todo.id !== id));
+  }, []);
+
+  const editTodo = useCallback((id: string, text: string) => {
+    setTodos((prev) =>
+      prev.map((todo) =>
+        todo.id === id ? { ...todo, text } : todo
+      )
+    );
+  }, []);
+
+  return { todos, addTodo, toggleTodo, deleteTodo, editTodo };
+}
+```
+
+**关键概念：**
+
+- **自定义 Hook**：以 `use` 开头的函数，内部可调用其他 Hook
+- **useEffect**：副作用，组件挂载/更新/卸载时执行。这里用于同步 localStorage
+- **useCallback**：缓存函数引用，避免子组件不必要地重渲染
+- **不可变更新**：永远不要直接修改 state。用 `map`、`filter`、`...` 展开创建新对象
+
+## 第七章：主组件——组合在一起
+
+```tsx
+// src/App.tsx
+import { AddTodo } from './components/AddTodo';
+import { TodoList } from './components/TodoList';
+import { useTodos } from './hooks/useTodos';
+
+export default function App() {
+  const { todos, addTodo, toggleTodo, deleteTodo, editTodo } = useTodos();
+
+  const completedCount = todos.filter((t) => t.completed).length;
+  const activeCount = todos.length - completedCount;
+
+  return (
+    <div className="app">
+      <h1>我的待办</h1>
+      <p className="stats">
+        总计 {todos.length} | 已完成 {completedCount} | 未完成 {activeCount}
+      </p>
+      <AddTodo onAdd={addTodo} />
+      <TodoList
+        todos={todos}
+        onToggle={toggleTodo}
+        onDelete={deleteTodo}
+        onEdit={editTodo}
+      />
+    </div>
+  );
+}
+```
+
+## 第八章：核心概念回顾
+
+### 组件 = 函数
+
+```tsx
+// React 组件就是一个返回 JSX 的函数
+function Greeting({ name }: { name: string }) {
+  return <h1>你好，{name}！</h1>;
+}
+```
+
+### State 变了 → 组件重新渲染
+
+```tsx
+function Counter() {
+  const [count, setCount] = useState(0);
+
+  return (
+    <div>
+      <p>{count}</p>
+      <button onClick={() => setCount(count + 1)}>+1</button>
+      {/* 点击按钮 → setCount → count 变了 → 组件重新渲染 → 显示新数字 */}
+    </div>
+  );
+}
+```
+
+### State 更新是异步的
+
+```tsx
+const [count, setCount] = useState(0);
+
+// ❌ 错误：多次调用只生效最后一次
+setCount(count + 1);
+setCount(count + 1);
+// count 只加了 1（因为两次用的都是同一个 count 值）
+
+// ✅ 正确：用函数形式更新
+setCount((prev) => prev + 1);
+setCount((prev) => prev + 1);
+// count 加了 2
+```
+
+### Props 是只读的
+
+```tsx
+// ❌ 错误：子组件不能修改 props
+function BadChild({ count }: { count: number }) {
+  count = count + 1; // 运行时错误
+  return <p>{count}</p>;
+}
+```
+
+### useEffect 的执行时机
+
+```tsx
+useEffect(() => {
+  // 组件挂载时执行
+  console.log('组件挂载了');
+
+  return () => {
+    // 组件卸载时执行（清理副作用）
+    console.log('组件卸载了');
+  };
+}, []); // 空数组 = 只在挂载/卸载时执行
+
+useEffect(() => {
+  // todos 变化时执行
+  localStorage.setItem('todos', JSON.stringify(todos));
+}, [todos]); // 依赖数组 = todos 变了才执行
+```
+
+## 第九章：样式
+
+```css
+/* src/App.css */
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+body { font-family: system-ui, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; }
+
+.app { display: flex; flex-direction: column; gap: 16px; }
+
+form { display: flex; gap: 8px; }
+form input { flex: 1; padding: 8px; border: 1px solid #ddd; border-radius: 4px; }
+form button { padding: 8px 16px; background: #0070f3; color: white; border: none; border-radius: 4px; cursor: pointer; }
+form button:disabled { background: #ccc; cursor: not-allowed; }
+
+ul { list-style: none; display: flex; flex-direction: column; gap: 8px; }
+li { display: flex; align-items: center; gap: 8px; padding: 8px; background: #f9f9f9; border-radius: 4px; }
+li span { flex: 1; }
+li button { padding: 4px 8px; border: 1px solid #ddd; border-radius: 4px; background: white; cursor: pointer; }
+li input[type="checkbox"] { width: 18px; height: 18px; cursor: pointer; }
+
+.stats { color: #666; font-size: 14px; }
+.empty { text-align: center; color: #999; padding: 40px; }
+```
+
+## 避坑清单
+
+| 坑 | 正确做法 |
+|----|---------|
+| 直接修改 state | 永远用不可变更新：`setState(prev => [...prev, newItem])`，不要 `prev.push(newItem)` |
+| 在循环里用 Hooks | Hooks 必须在组件顶层调用，不能在 `if`、`for`、函数里用 |
+| 忘了加 key | 列表渲染时每个元素加唯一 `key`，别用 `index`（会导致状态错乱） |
+| setState 连续调用 | 用函数形式 `setCount(prev => prev + 1)` |
+| useEffect 无限循环 | 依赖数组没加或者加错了对象引用。依赖翻转用 ref |
+| 子组件不必要地重渲染 | 用 `React.memo` + `useCallback` 优化，但先别过早优化 |
+| 组件拆得太碎或太大 | 单一职责：一个组件只做一件事 |
+| 在 TypeScript 里用 `any` | Props、State、事件处理都要写类型 |
+| 忘了处理加载/空/错误状态 | 永远考虑三个状态：loading、empty、error |
+| CSS 全写在一个文件里 | 用 CSS Modules 或 Tailwind 做样式隔离 |
+
+## 小结
+
+React 的核心思想不复杂：
+
+```text
+一个组件就是一个函数
+Props 是输入，JSX 是输出
+State 是内部记忆
+State 变了 → 组件重新运行 → UI 更新
+```
+
+你刚用 TypeScript 从零写了一个完整的 Todo App，包含了增删改查、数据持久化、状态统计。所有代码在 [GitHub](https://github.com) 上能找到完整源码。
+
+下一步可以加什么：
+
+- **过滤**：全部 / 未完成 / 已完成 切换
+- **拖拽排序**：`@dnd-kit` 实现拖拽排序
+- **主题切换**：useContext 实现深色模式
+- **后端 API**：用 fetch 对接后端，替代 localStorage
+
+一个 Todo App 虽小，但 React 的核心概念都在里面了。理解了它，再看 Next.js、Remix 这些框架的时候，你会发现——它们只是在 React 的基础上加了「怎么获取数据、怎么路由」的约定。
