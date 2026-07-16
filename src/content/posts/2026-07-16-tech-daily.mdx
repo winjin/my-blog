@@ -1,0 +1,464 @@
+---
+title: "SQLite 入门：从零开始认识世界上部署最广泛的数据库"
+description: "由浅入深讲解 SQLite 数据库：它是什么、为什么无处不在、与 MySQL/PostgreSQL 的差异、数据类型与约束、常用 SQL 语句、Node.js 原生调用、事务与并发、索引优化以及生产环境的使用建议。全文含可运行的代码示例与避坑清单。"
+category: tech
+tags: ["SQLite", "数据库", "嵌入式数据库", "Node.js", "SQL", "入门"]
+date: 2026-07-16
+draft: false
+cover: "https://images.unsplash.com/photo-1489875347897-49f64b51c1f8?w=1200&h=630&fit=crop"
+---
+
+SQLite 是地球上部署最广泛的数据库引擎。你的手机里、浏览器里、甚至你家的智能电视里都有它。它不像 MySQL 那样需要独立服务器进程，也不像 Redis 那样常驻内存——它只是一个文件。
+
+但别被它的简单骗了。SQLite 支持完整的 SQL 语法、事务、触发器、视图、窗口函数，甚至支持 JSON 查询。小而全，是它最大的特点。
+
+## 第一章：SQLite 是什么
+
+SQLite 是一个**嵌入式关系型数据库引擎**，区别在于：
+
+| | SQLite | MySQL / PostgreSQL |
+|------|--------|-------------------|
+| 架构 | 嵌入式（直接在应用进程内运行） | C/S（独立服务进程） |
+| 存储 | 单文件 | 多文件 + 日志 |
+| 启动 | 零配置，文件即数据库 | 需安装、启动、配置用户 |
+| 并发 | 写操作串行（一个写锁） | 多连接并发写 |
+| 大小 | 编译后 < 600KB | 几百 MB ~ GB |
+| 适用 | 移动端、桌面端、嵌入式、小网站 | 高并发服务端 |
+
+**SQLite 的典型场景：**
+
+```text
+- iOS / Android App 的本地存储
+- 浏览器 Web Storage 的底层引擎
+- 桌面软件（Chrome、Firefox、Sublime Text 都在用）
+- 开发 / 测试环境替代 MySQL
+- 嵌入式设备（路由器、智能家居）
+- 小流量网站（日均几百 PV）
+```
+
+**不适用场景：**
+
+- 高并发写入（每秒数千次以上的写操作）
+- 分布式部署
+- 需要用户权限管理
+- 存储量超过几十 GB
+
+## 第二章：快速上手
+
+### 安装
+
+```bash
+# macOS（自带）
+sqlite3 --version
+
+# 如果没有，用 Homebrew
+brew install sqlite
+
+# Ubuntu / Debian
+sudo apt install sqlite3
+
+# Windows
+# 从 https://www.sqlite.org/download.html 下载
+```
+
+### 创建数据库
+
+```bash
+# 创建（或打开）一个数据库文件
+sqlite3 myblog.db
+
+# 进入 sqlite3 交互式终端后：
+sqlite> .help        # 查看帮助
+sqlite> .databases   # 查看已打开的数据库
+sqlite> .quit        # 退出
+```
+
+### 创建表
+
+```sql
+CREATE TABLE posts (
+    id        INTEGER PRIMARY KEY AUTOINCREMENT,
+    title     TEXT    NOT NULL,
+    content   TEXT    NOT NULL,
+    category  TEXT    NOT NULL DEFAULT 'tech',
+    tags      TEXT,                     -- JSON 数组存成字符串
+    created_at TEXT   NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT   NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE comments (
+    id        INTEGER PRIMARY KEY AUTOINCREMENT,
+    post_id   INTEGER NOT NULL,
+    author    TEXT    NOT NULL,
+    body      TEXT    NOT NULL,
+    created_at TEXT   NOT NULL DEFAULT (datetime('now')),
+    FOREIGN KEY (post_id) REFERENCES posts(id)
+);
+```
+
+### 数据类型
+
+SQLite 只有五种**存储类型**：
+
+| 类型 | 说明 | 示例 |
+|------|------|------|
+| `NULL` | 空值 | `NULL` |
+| `INTEGER` | 整数（1~8 字节） | `42` |
+| `REAL` | 浮点数（8 字节 IEEE） | `3.14` |
+| `TEXT` | 字符串（UTF-8/16） | `'hello'` |
+| `BLOB` | 二进制数据 | `x'ABCD'` |
+
+**特别之处**：SQLite 采用**类型亲和**（Type Affinity）而不是严格类型检查。你可以往 `INTEGER` 列里插入文本，它不会报错——但这通常不是好习惯。
+
+```sql
+-- 允许，但不推荐
+INSERT INTO posts (title, content, category) VALUES (42, 'content', 'tech');
+-- title 列最终存的是 '42'（TEXT）
+```
+
+## 第三章：CRUD 操作
+
+### 插入数据
+
+```sql
+-- 单条插入
+INSERT INTO posts (title, content, category, tags)
+VALUES ('SQLite 入门', '这是正文...', 'tech', '["sqlite","database"]');
+
+-- 批量插入
+INSERT INTO posts (title, content, category) VALUES
+    ('文章一', '内容一', 'tech'),
+    ('文章二', '内容二', 'life'),
+    ('文章三', '内容三', 'economy');
+
+-- 插入并返回 ID
+INSERT INTO posts (title, content) VALUES ('测试', '正文');
+SELECT last_insert_rowid();  -- 返回最后插入的 ID
+```
+
+### 查询数据
+
+```sql
+-- 基本查询
+SELECT * FROM posts;
+
+-- 条件查询
+SELECT * FROM posts WHERE category = 'tech';
+
+-- 排序
+SELECT * FROM posts ORDER BY created_at DESC;
+
+-- 分页
+SELECT * FROM posts ORDER BY created_at DESC LIMIT 10 OFFSET 0;
+
+-- 模糊搜索
+SELECT * FROM posts WHERE title LIKE '%SQLite%';
+
+-- 聚合
+SELECT category, COUNT(*) as count FROM posts GROUP BY category;
+```
+
+### 更新和删除
+
+```sql
+-- 更新
+UPDATE posts SET content = '新内容', updated_at = datetime('now')
+WHERE id = 1;
+
+-- 删除
+DELETE FROM comments WHERE post_id = 1;
+DELETE FROM posts WHERE id = 1;
+```
+
+## 第四章：Node.js 中使用 SQLite
+
+Node.js 内置对 SQLite 的支持（18+ 实验性，22+ 稳定）。无需安装任何 npm 包：
+
+```bash
+node --experimental-sqlite  # Node 18/20
+# Node 22+ 直接可用
+```
+
+```javascript
+// db.mjs - Node.js 原生 SQLite（Node 22+）
+import { DatabaseSync } from 'node:sqlite';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const __dirname = fileURLToPath(new URL('.', import.meta.url));
+const db = new DatabaseSync(join(__dirname, 'myblog.db'));
+
+// 开启 WAL 模式（更好的并发）
+db.exec('PRAGMA journal_mode = WAL;');
+db.exec('PRAGMA foreign_keys = ON;');
+
+// 创建表
+db.exec(`
+  CREATE TABLE IF NOT EXISTS posts (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    title      TEXT    NOT NULL,
+    content    TEXT    NOT NULL,
+    category   TEXT    NOT NULL DEFAULT 'tech',
+    created_at TEXT    NOT NULL DEFAULT (datetime('now'))
+  )
+`);
+
+// 插入 - 用参数化查询防 SQL 注入
+const insert = db.prepare(
+  'INSERT INTO posts (title, content, category) VALUES (?, ?, ?)'
+);
+insert.run('文章标题', '文章正文内容', 'tech');
+
+// 查询
+const query = db.prepare('SELECT * FROM posts WHERE category = ?');
+const posts = query.all('tech');
+console.log(posts);
+
+// 查询单条
+const post = db.prepare('SELECT * FROM posts WHERE id = ?').get(1);
+console.log(post);
+
+// 事务
+const insertPost = db.prepare(
+  'INSERT INTO posts (title, content) VALUES (?, ?)'
+);
+
+const transaction = db.transaction(() => {
+  insertPost.run('文章A', '正文A');
+  insertPost.run('文章B', '正文B');
+});
+
+transaction();
+console.log('事务已提交');
+```
+
+### 使用 better-sqlite3（更推荐）
+
+Node 原生 SQLite 还在完善中，生产环境推荐用 `better-sqlite3`：
+
+```bash
+npm install better-sqlite3
+```
+
+```javascript
+// db.better.mjs
+import Database from 'better-sqlite3';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const __dirname = fileURLToPath(new URL('.', import.meta.url));
+const db = new Database(join(__dirname, 'myblog.db'));
+
+// 配置
+db.pragma('journal_mode = WAL');
+db.pragma('foreign_keys = ON');
+
+// 创建表
+db.exec(`
+  CREATE TABLE IF NOT EXISTS users (
+    id    INTEGER PRIMARY KEY AUTOINCREMENT,
+    name  TEXT    NOT NULL,
+    email TEXT    NOT NULL UNIQUE
+  )
+`);
+
+// 插入并返回插入的行
+const stmt = db.prepare('INSERT INTO users (name, email) VALUES (?, ?)');
+const result = stmt.run('张三', 'zhangsan@example.com');
+console.log('插入的 ID:', result.lastInsertRowid);
+
+// 查询
+const users = db.prepare('SELECT * FROM users').all();
+console.log(users);
+
+// 关闭
+db.close();
+```
+
+**为什么选 better-sqlite3：** 同步 API（不需要 async/await，代码更简单）、比异步库快 2-5 倍、支持用户自定义函数。
+
+## 第五章：事务与并发控制
+
+SQLite 是**写串行化**的——同一时间只有一个连接能写入。读则可以并发。
+
+```text
+事务 A（写）  ──────── 加写锁 ──────── 释放
+                     │
+事务 B（写）        等待 ──────── 加锁 ────
+                     │
+事务 C（读）  ──────── 无影响（WAL 模式）
+```
+
+### 事务示例
+
+```javascript
+import Database from 'better-sqlite3';
+const db = new Database('shop.db');
+db.pragma('journal_mode = WAL');
+
+// 转账：两条更新在一个事务里，要么都成功要么都回滚
+const deduct = db.prepare('UPDATE accounts SET balance = balance - ? WHERE id = ?');
+const add = db.prepare('UPDATE accounts SET balance = balance + ? WHERE id = ?');
+
+const transfer = db.transaction((fromId, toId, amount) => {
+  const from = deduct.run(amount, fromId);
+  if (from.changes === 0) throw new Error('转出账户不存在');
+
+  const to = add.run(amount, toId);
+  if (to.changes === 0) throw new Error('转入账户不存在');
+});
+
+try {
+  transfer(1, 2, 100);
+  console.log('转账成功');
+} catch (err) {
+  console.error('转账失败，已回滚:', err.message);
+}
+```
+
+### WAL 模式
+
+默认的 rollback journal 模式下，读操作会阻塞写操作。WAL（Write-Ahead Logging）模式允许**同时读**：
+
+```sql
+PRAGMA journal_mode = WAL;
+-- 一次设置后永久有效
+```
+
+```text
+WAL 模式下的并发：
+┌─────────────────────────────┐
+│  多个读连接同时进行          │  ← 不阻塞
+├─────────────────────────────┤
+│  一个写连接（写 WAL 文件）   │  ← 不阻塞读
+├─────────────────────────────┤
+│  Checkpoint（刷入主文件）     │  ← 短暂的写锁
+└─────────────────────────────┘
+```
+
+## 第六章：索引与性能优化
+
+### 索引
+
+```sql
+-- 单列索引
+CREATE INDEX idx_posts_category ON posts(category);
+
+-- 联合索引
+CREATE INDEX idx_posts_cat_created ON posts(category, created_at DESC);
+
+-- 唯一索引（同时作为约束）
+CREATE UNIQUE INDEX idx_users_email ON users(email);
+
+-- 部分索引（只索引活跃用户，减少索引大小）
+CREATE INDEX idx_active_users ON users(email) WHERE status = 'active';
+```
+
+### 查询计划
+
+```sql
+-- 用 EXPLAIN 看是否走了索引
+EXPLAIN QUERY PLAN
+SELECT * FROM posts WHERE category = 'tech' ORDER BY created_at DESC;
+```
+
+输出解读：
+
+```text
+-- 没索引时（全表扫描）：
+SCAN posts
+
+-- 有索引时：
+SEARCH posts USING INDEX idx_posts_cat_created (category=?)
+```
+
+### 性能最佳实践
+
+```sql
+-- 1. 只查询需要的列，不用 SELECT *
+SELECT title, created_at FROM posts WHERE category = 'tech';
+
+-- 2. 用 LIMIT 限制结果集
+SELECT * FROM posts ORDER BY created_at DESC LIMIT 20;
+
+-- 3. 批量插入用事务包裹（1000 条比单条快 100 倍）
+BEGIN;
+INSERT INTO posts (title, content) VALUES ('a', 'b');
+INSERT INTO posts (title, content) VALUES ('c', 'd');
+-- ...
+COMMIT;
+
+-- 4. 打开计数优化
+PRAGMA count_changes = OFF;
+
+-- 5. 设置合适的缓存
+PRAGMA cache_size = -64000;  -- 64MB（负数表示 KB）
+```
+
+## 第七章：SQLite 与 JSON
+
+SQLite 3.9+ 支持 JSON 函数，可以直接操作 JSON 字段：
+
+```sql
+-- 创建带 JSON 字段的表
+CREATE TABLE products (
+    id    INTEGER PRIMARY KEY,
+    name  TEXT,
+    attrs TEXT  -- JSON 字符串
+);
+
+INSERT INTO products VALUES
+    (1, '手机', '{"color": "黑色", "storage": "256GB", "price": 3999}'),
+    (2, '笔记本', '{"color": "银色", "ram": "16GB", "price": 8999}');
+
+-- JSON 提取
+SELECT
+    name,
+    json_extract(attrs, '$.color') AS color,
+    json_extract(attrs, '$.price') AS price
+FROM products;
+
+-- JSON 条件查询
+SELECT * FROM products
+WHERE json_extract(attrs, '$.price') > 5000;
+
+-- JSON 更新
+UPDATE products
+SET attrs = json_set(attrs, '$.price', 3499)
+WHERE id = 1;
+```
+
+## 第八章：常用 PRAGMA 配置
+
+SQLite 通过 PRAGMA 语句控制运行行为：
+
+```sql
+-- 推荐的生产配置
+PRAGMA journal_mode = WAL;             -- WAL 模式，读写不互斥
+PRAGMA foreign_keys = ON;              -- 外键约束
+PRAGMA synchronous = NORMAL;           -- 平衡安全与性能
+PRAGMA cache_size = -64000;            -- 64MB 缓存
+PRAGMA busy_timeout = 5000;            -- 等待锁的超时时间（毫秒）
+PRAGMA temp_store = MEMORY;            -- 临时表存内存
+PRAGMA mmap_size = 268435456;          -- 256MB 内存映射
+```
+
+## 避坑清单
+
+| 坑 | 正确做法 |
+|----|---------|
+| 没有备份就操作数据库 | SQLite 是单文件，直接复制文件就是备份。操作前先停写 |
+| 高并发写入用默认模式 | 用 WAL 模式 + busy_timeout，减少锁冲突 |
+| 不用参数化查询 | 用 `?` 占位符，不要拼接 SQL 字符串（防注入） |
+| 大量插入不包事务 | 一千条 INSERT 不包事务比包事务慢几百倍 |
+| 在生产环境用 NFS/SMB 存 SQLite | SQLite 依赖文件锁，网络文件系统锁不可靠 |
+| 不设 PRAGMA foreign_keys | 创建表时写了 FOREIGN KEY 但没开，约束不生效 |
+| 用 LIKE '%keyword%' 做全文搜索 | 小数据量可以，大数据量用 FTS5 全文索引 |
+| 事务不处理回滚 | 用 try/catch 包裹事务，失败时回滚 |
+| 文件大于 10GB 才考虑迁移 | SQLite 撑到 100GB 也没问题，但备份和性能会下降 |
+| 同时打开太多连接 | 推荐单连接 + WAL 多读，或最多 4-8 个连接 |
+
+## 小结
+
+SQLite 是一个经常被低估的数据库。它不够「酷」，但足够**可靠**。
+
