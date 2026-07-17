@@ -1,0 +1,374 @@
+---
+title: "Vercel 完全指南：从零部署到生产环境，前端项目的首选平台"
+description: "由浅入深讲解 Vercel 的使用：它是什么、为什么前端项目首选它、零配置部署静态站点、Serverless Functions、Edge Functions、环境变量与自定义域名、预览部署与团队协作、监控与分析，以及从免费到团队版的价格选择。全文含可操作步骤与避坑清单。"
+category: tech
+tags: ["Vercel", "部署", "Serverless", "Edge Functions", "前端", "CI/CD", "托管"]
+date: 2026-07-17
+draft: false
+cover: "https://images.unsplash.com/photo-1629654297299-c8506221ca97?w=1200&h=630&fit=crop"
+---
+
+如果你问 2026 年的前端开发者「项目部署在哪」，Vercel 很可能是前三的答案。
+
+Vercel 是一个前端云平台。它的卖点可以概括为三个词：**零配置、全球加速、自动 CI/CD**。你只需要把代码推到 Git 仓库，剩下的事情——构建、部署、SSL、CDN——Vercel 全自动搞定。
+
+## 第一章：Vercel 是什么
+
+Vercel 最初是 Next.js 的创建者开发的部署平台，后来发展成支持所有前端框架的通用部署平台。
+
+```text
+对比传统部署 vs Vercel 部署：
+
+传统方式：
+  Git push → CI/CD 构建 → rsync/SCP 上传到服务器 → 配置 Nginx → 申请 SSL → 配置 CDN
+  （手动 5 步，每步都可能出错）
+
+Vercel 方式：
+  Git push → Vercel 自动构建并部署
+  （零配置，一步完成）
+```
+
+**Vercel 的核心理念：**
+
+| 功能 | 做了什么 |
+|------|---------|
+| 零配置部署 | 自动检测框架（React/Vue/Svelte/Astro/Next.js...），用最佳配置构建 |
+| 全球 CDN | 部署到全球 100+ 边缘节点，用户就近访问 |
+| 自动 SSL | 每个部署自动分配 `*.vercel.app` 域名 + Let's Encrypt 证书 |
+| 预览部署 | 每个 PR 自动生成一个预览 URL，方便 reviewer 查看 |
+| Serverless Functions | 在 `/api` 目录下写 Node.js 函数，自动变成 API 端点 |
+| Edge Functions | 在 CDN 边缘节点运行代码，毫秒级响应 |
+| 分析 | 内置 Web Analytics 和 Speed Insights |
+
+## 第二章：快速部署第一个项目
+
+### 方式一：通过 Git 仓库部署（推荐）
+
+```bash
+# 1. 在 Vercel 官网点击 "Add New → Project"
+# 2. 连接你的 GitHub/GitLab/Bitbucket 仓库
+# 3. Vercel 自动检测框架（以下配置自动识别，无需手动填写）
+
+# Framework Preset 自动检测：
+#   - Next.js → build: next build, output: .next
+#   - Astro → build: astro build, output: dist
+#   - Vite → build: vite build, output: dist
+#   - Create React App → build: react-scripts build, output: build
+
+# 4. 点击 Deploy，等几十秒，你的项目就上线了
+# 5. 每次 git push 到主分支，Vercel 自动重新部署
+```
+
+### 方式二：通过 CLI 部署
+
+```bash
+# 安装 Vercel CLI
+npm install -g vercel
+
+# 登录
+vercel login
+
+# 在项目目录中部署
+cd my-project
+vercel           # 部署到预览环境（生成预览 URL）
+vercel --prod    # 部署到生产环境
+```
+
+### 方式三：通过 Vercel Dashboard 拖拽部署
+
+打开 [vercel.com](https://vercel.com/new)，直接把项目文件夹拖进去——适合快速原型和静态页面。
+
+## 第三章：vercel.json 配置
+
+虽然 Vercel 号称零配置，但你也可以通过 `vercel.json` 自定义行为：
+
+```json
+{
+  "framework": "astro",
+  "buildCommand": "npm run build",
+  "outputDirectory": "dist",
+  "installCommand": "npm install",
+  "devCommand": "npm run dev"
+}
+```
+
+```json
+{
+  "rewrites": [
+    {
+      "source": "/api/(.*)",
+      "destination": "/api/$1"
+    },
+    {
+      "source": "/(.*)",
+      "destination": "/index.html"
+    }
+  ],
+  "redirects": [
+    {
+      "source": "/old-page",
+      "destination": "/new-page",
+      "permanent": true
+    }
+  ],
+  "headers": [
+    {
+      "source": "/(.*)",
+      "headers": [
+        {
+          "key": "X-Frame-Options",
+          "value": "DENY"
+        },
+        {
+          "key": "X-Content-Type-Options",
+          "value": "nosniff"
+        }
+      ]
+    }
+  ],
+  "functions": {
+    "api/**/*.ts": {
+      "maxDuration": 30
+    }
+  }
+}
+```
+
+**常用配置项：**
+
+| 配置 | 说明 |
+|------|------|
+| `rewrites` | URL 重写（浏览器地址不变） |
+| `redirects` | URL 重定向（浏览器地址变化） |
+| `headers` | 自定义响应头 |
+| `functions` | Serverless Function 配置（超时、内存） |
+| `crons` | 定时任务（Pro 及以上） |
+
+## 第四章：Serverless Functions
+
+在项目根目录创建 `api/` 文件夹，里面的 TypeScript/JavaScript 文件自动变成 API 端点：
+
+```typescript
+// api/hello.ts
+import type { VercelRequest, VercelResponse } from '@vercel/node';
+
+export default function handler(req: VercelRequest, res: VercelResponse) {
+  const { name } = req.query;
+
+  res.status(200).json({
+    message: `你好，${name || '世界'}！`,
+    timestamp: new Date().toISOString(),
+  });
+}
+```
+
+```typescript
+// api/submit-form.ts
+import type { VercelRequest, VercelResponse } from '@vercel/node';
+
+export default async function handler(req: VercelRequest, res: VercelResponse) {
+  if (req.method !== 'POST') {
+    return res.status(405).json({ error: '只支持 POST 请求' });
+  }
+
+  const { email, message } = req.body;
+
+  if (!email || !message) {
+    return res.status(400).json({ error: '缺少必填字段' });
+  }
+
+  // 这里可以：存数据库、发邮件、推送通知等
+  // await sendEmail({ email, message });
+
+  res.status(200).json({ success: true, message: '提交成功' });
+}
+```
+
+**访问方式：** `https://your-project.vercel.app/api/hello`
+
+**技术细节：**
+
+- 运行时：Node.js 18/20（默认）或 Python、Go、Ruby
+- 超时：免费版 10 秒，Pro 版 60 秒（可延长到 300 秒）
+- 内存：免费版 512MB，Pro 版 1GB
+- 冷启动：约 50-200ms（全球 100+ 节点缓存）
+- 无状态：每次调用都是独立容器，不要依赖本地变量持久化
+
+## 第五章：Edge Functions
+
+Edge Functions 在 CDN 边缘节点运行，比 Serverless Functions 更快（因为离用户更近）：
+
+```typescript
+// api/edge/hello.ts
+// Edge Functions 使用 Web 标准 API
+export const config = {
+  runtime: 'edge',
+};
+
+export default async function handler(request: Request): Promise<Response> {
+  const url = new URL(request.url);
+  const country = request.headers.get('x-vercel-ip-country') || 'unknown';
+
+  return new Response(
+    JSON.stringify({
+      message: `你好，来自 ${country} 的朋友！`,
+      path: url.pathname,
+      timestamp: Date.now(),
+    }),
+    {
+      headers: {
+        'content-type': 'application/json',
+        'x-edge-cache': 'miss',
+      },
+    }
+  );
+}
+```
+
+**适用场景：**
+
+| 场景 | 推荐方案 |
+|------|---------|
+| 静态内容 + SEO 页面 | 静态生成（SSG） |
+| 需要认证的 API | Serverless Functions |
+| 全球用户访问的地理相关服务 | Edge Functions |
+| 数据量大的计算 | Serverless Functions |
+| A/B 测试、个性化页面 | Edge Middleware |
+
+## 第六章：环境变量与 Secrets
+
+在 Vercel Dashboard → Settings → Environment Variables 中设置：
+
+```bash
+# 三种作用域：
+# - Production: 仅生产环境
+# - Preview: 仅预览部署
+# - Development: 仅本地开发（vercel dev）
+
+# 在代码中读取：
+DATABASE_URL="postgres://..."
+API_KEY="sk-xxx"
+NEXT_PUBLIC_SITE_URL="https://example.com"  # NEXT_PUBLIC_ 前缀会暴露给浏览器端
+```
+
+```bash
+# 本地开发时同步环境变量
+vercel env pull .env
+```
+
+## 第七章：预览部署与团队协作
+
+这是 Vercel 最被低估的功能之一。
+
+```text
+开发者 A 创建 PR "feat: 添加搜索功能"
+  → Vercel 自动生成预览 URL: my-project-git-feat-search.vercel.app
+  → 在 PR 评论区自动发布 preview URL 链接
+  → 产品经理点开预览 URL 验收
+  → Reviewers 审查代码 + 预览
+  → Merge PR → 自动部署到生产环境
+```
+
+**预览部署的好处：**
+
+- 每个 PR 有一个独立的、可访问的 URL
+- 不再需要「我本地跑一下你看看」的沟通
+- 可以配置 GitHub 状态检查——预览部署成功后才能 merge
+
+## 第八章：监控与分析
+
+Vercel 内置了 Web Analytics（不依赖第三方 Cookie）：
+
+```bash
+# 在 Vercel Dashboard 启用 Analytics
+# 会自动跟踪：页面浏览量、访问来源、访问设备、热门页面
+
+# Speed Insights（性能监控）
+# 自动记录 LCP、FID、CLS 等 Core Web Vitals
+# 每次部署后对比性能变化
+```
+
+**Speed Insights 演示：**
+
+```text
+当前部署 vs 上一次部署 性能对比：
+
+指标          当前部署   上一次部署  变化
+LCP (最大内容绘制)  1.2s      1.5s       ↓ 20% ✅
+FID (首次输入延迟)   25ms      30ms       ↓ 17% ✅
+CLS (累积布局偏移)   0.05      0.12       ↓ 58% ✅
+```
+
+## 第九章：从免费到企业版
+
+| 功能 | Hobby（免费） | Pro（$20/月） | Enterprise |
+|------|-------------|-------------|-----------|
+| 带宽 | 100 GB/月 | 1 TB/月 | 自定义 |
+| Serverless Functions | 100 GB-小时/月 | 1000 GB-小时/月 | 自定义 |
+| Edge Functions | 500k 调用/月 | 500 万调用/月 | 自定义 |
+| 团队成员 | 1 人 | 多人 | 不限 |
+| 预览部署 | ✓ | ✓ | ✓ |
+| 自定义域名 | ✓ | ✓ | ✓ |
+| 密码保护 | ✗ | ✓ | ✓ |
+| SLA | ✗ | 99.99% | 99.99%+ |
+| 支持 | 社区 | 邮件 | 专属 |
+
+**Tip：** 个人项目和小团队用免费版已经足够了。100GB 带宽对大多数博客或个人项目来说绰绰有余。
+
+## 第十章：迁移注意事项
+
+如果你要从其他平台迁移到 Vercel：
+
+```bash
+# 1. 检查框架兼容性
+# Vercel 支持：Next.js、Astro、Nuxt、SvelteKit、Remix、Hexo、Hugo、Vite、Create React App...
+# 不支持 PHP、WordPress（除非用第三方适配器）
+
+# 2. 检查构建输出目录
+# Astro 默认为 dist
+# Next.js 不能修改 output 目录（Vercel 深度集成）
+# 确认 vercel.json 的 outputDirectory 设置正确
+
+# 3. 检查环境变量
+# 在 Vercel Dashboard 添加所有生产环境变量
+# 不要在代码中硬编码 API Key
+
+# 4. 检查自定义域名
+# Vercel Dashboard → Domains → 添加域名 → 配置 DNS
+# Vercel 提供 DNS 托管或让你配置 CNAME
+
+# 5. 部署后验证
+# - HTTPS 是否自动生效
+# - API 端点是否可访问
+# - 图片和静态资源是否正确加载
+# - 重定向/重写规则是否生效
+```
+
+## 避坑清单
+
+| 坑 | 正确做法 |
+|----|---------|
+| 免费版没挂但超带宽被限 | 监控 Dashboard 的带宽用量，快用尽时升级 Pro |
+| 函数冷启动慢 | 用 Edge Functions 替代 Serverless Functions（冷启动接近 0） |
+| 文件大小超过 50MB 限制 | 大文件放 CDN（如 AWS S3），别直接部署到 Vercel |
+| 依赖本地文件系统 | Serverless Functions 是无状态的，用数据库或对象存储 |
+| 忽略 preview deployment | 每次 PR 都预览，生产事故从预览部署就发现 |
+| 不设 vercel.json 的 headers | 安全相关的响应头要显式配置 |
+| 环境变量暴露到客户端 | 非公开的变量不加 `NEXT_PUBLIC_` 前缀 |
+| 直接用默认域名做生产 | 绑定自定义域名，`*.vercel.app` 会被部分企业防火墙屏蔽 |
+| 不配置 404 页面 | SPA 项目要配 `rewrites` 把未匹配的路由指向 `index.html` |
+| 用 Vercel 存文件上传 | 用户上传的文件存 S3/Cloudinary，不是 Vercel 的职责 |
+
+## 小结
+
+Vercel 让前端部署从「运维活」变成了「不需要思考的一步」。
+
+你不需要：
+- 买服务器、配 Nginx、申请 SSL
+- 写 CI/CD 脚本、配置 CDN
+- 担心不重启会影响在线用户
+
+你只需要：
+- `git push` → 上线
+
+对于个人博客、公司官网、SaaS 应用、文档站点——Vercel 是最省心的选择。而对于需要复杂后端的应用，搭配其他后端服务（如 Supabase、PlanetScale）一起使用，Vercel 就是前端的完美发射台。
