@@ -1,0 +1,446 @@
+---
+title: "Rust 语言入门：从零开始掌握最受喜爱的现代系统编程语言"
+description: "由浅入深讲解 Rust 语言的核心概念：为什么 Rust 连续多年蝉联「最受喜爱语言」、安装与项目结构、变量与所有权、借用与生命周期、Struct 与 Enum、错误处理、包管理 Cargo，最后用 Rust 写一个完整的命令行工具（CLI），附一份 Rust 避坑清单。"
+category: tech
+tags: ["Rust", "系统编程", "所有权", "Cargo", "CLI", "入门"]
+date: 2026-07-20
+draft: false
+cover: "https://images.unsplash.com/photo-1518432031352-d6fc5c10da5a?w=1200&h=630&fit=crop"
+---
+
+Rust 连续多年在 Stack Overflow 开发者调查中蝉联「最受喜爱语言」第一名。它不是最流行的语言，但用过的开发者普遍不想回去。
+
+Rust 的核心承诺是：**内存安全，无需垃圾回收（GC），且不牺牲性能**。这意味着你可以写出像 C/C++ 一样高效的代码，同时编译器帮你杜绝了内存泄漏、悬垂指针、数据竞争等最棘手的 bug。
+
+## 第一章：安装与第一个项目
+
+```bash
+# 安装 Rust（推荐方式）
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+
+# 验证安装
+rustc --version
+cargo --version
+
+# 创建新项目
+cargo new hello-rust
+cd hello-rust
+```
+
+项目结构：
+
+```text
+hello-rust/
+├── Cargo.toml    # 包配置（类似 package.json）
+├── src/
+│   └── main.rs   # 入口文件
+```
+
+```rust
+// src/main.rs
+fn main() {
+    println!("Hello, Rust!");
+}
+```
+
+```bash
+# 编译并运行
+cargo run
+# 输出: Hello, Rust!
+```
+
+`Cargo` 是 Rust 的包管理器和构建工具，类似于 npm + webpack 合体。
+
+## 第二章：基础语法
+
+### 变量与可变性
+
+```rust
+fn main() {
+    // 默认不可变
+    let x = 5;
+    // x = 6; // ❌ 编译错误：不能修改不可变变量
+
+    // mut 关键字声明可变
+    let mut y = 5;
+    y = 6; // ✅
+
+    // 常量（必须在编译期确定值）
+    const MAX_USERS: u32 = 1000;
+
+    // 隐藏（Shadowing）：同名变量覆盖前一个
+    let z = 10;
+    let z = z + 5; // 新变量，类型可以不同
+    println!("{}", z); // 15
+}
+```
+
+### 基础类型
+
+```rust
+fn main() {
+    // 标量类型
+    let a: i32 = -42;        // 有符号 32 位整数
+    let b: u64 = 100;        // 无符号 64 位整数
+    let c: f64 = 3.14;       // 浮点数
+    let d: bool = true;      // 布尔
+    let e: char = '🦀';      // 字符（Unicode，4 字节）
+
+    // 复合类型
+    let tup: (i32, f64, char) = (500, 6.4, 'R');
+    let (x, y, z) = tup;     // 解构
+    println!("{}", tup.0);    // 元组索引
+
+    let arr: [i32; 3] = [1, 2, 3];
+    println!("{}", arr[0]);   // 数组索引
+}
+```
+
+### 函数
+
+```rust
+fn add(a: i32, b: i32) -> i32 {
+    a + b  // 表达式，不加分号 = 返回值
+}
+
+fn greet(name: &str) {
+    println!("你好，{}！", name);
+}
+
+// 函数是「表达式」（有返回值），if/loop/match 也是
+fn main() {
+    let result = add(3, 5);
+    println!("{}", result); // 8
+
+    let condition = true;
+    let number = if condition { 5 } else { 10 };
+    println!("{}", number); // 5
+}
+```
+
+## 第三章：所有权——Rust 最独特的特性
+
+所有权是 Rust 最核心、也是最需要花时间理解的概念。它让 Rust 不需要 GC 就能保证内存安全。
+
+### 三条规则
+
+```text
+1. Rust 中每个值都有一个所有者（Owner）
+2. 同一时间只有一个所有者
+3. 所有者离开作用域，值被自动释放
+```
+
+```rust
+fn main() {
+    // s1 是 String 的所有者
+    let s1 = String::from("hello");
+
+    // s1 的所有权转移（Move）给 s2
+    let s2 = s1;
+
+    // println!("{}", s1); // ❌ 编译错误：s1 已失效
+    println!("{}", s2);    // ✅ "hello"
+}
+```
+
+**为什么？** `String` 在堆上分配内存。如果 `s1` 和 `s2` 都指向同一块内存，离开作用域时就会 double free。Rust 的解决方式不是做深拷贝，而是**转移所有权**——s1 从此失效。
+
+```rust
+fn takes_ownership(s: String) {
+    println!("{}", s);
+} // s 离开作用域，drop 释放内存
+
+fn main() {
+    let s = String::from("hello");
+    takes_ownership(s);
+    // println!("{}", s); // ❌ 所有权已转移给函数
+}
+```
+
+### 克隆 vs 移动
+
+```rust
+fn main() {
+    let s1 = String::from("hello");
+    let s2 = s1.clone();  // 深拷贝（性能开销大）
+
+    println!("s1 = {}, s2 = {}", s1, s2); // ✅ 两个都有效
+}
+```
+
+**栈上的数据类型（i32、bool、f64、元组等）默认实现 Copy trait，赋值就是拷贝：**
+
+```rust
+let x = 5;
+let y = x;  // 拷贝，不是移动
+println!("{} {}", x, y); // ✅ 5 5
+```
+
+## 第四章：借用与引用——不转移所有权
+
+如果每次传值都转移所有权，代码会很别扭。Rust 提供**借用（Borrowing）**——不转移所有权，只是暂时引用。
+
+```rust
+fn calculate_length(s: &String) -> usize {
+    s.len()
+} // s 离开作用域，但它不拥有 String，所以不会 drop
+
+fn main() {
+    let s = String::from("hello");
+    let len = calculate_length(&s); // 借用
+    println!("'{}' 长度是 {}", s, len); // ✅ s 仍然有效
+}
+```
+
+### 可变引用
+
+```rust
+fn change(s: &mut String) {
+    s.push_str(", world");
+}
+
+fn main() {
+    let mut s = String::from("hello");
+    change(&mut s);
+    println!("{}", s); // "hello, world"
+}
+```
+
+### 引用规则（面试常考）
+
+```text
+1. 任意时刻，你只能拥有以下之一：
+   - 一个可变引用
+   - 任意数量的不可变引用
+2. 引用必须始终有效（不会出现悬垂引用）
+```
+
+```rust
+let mut s = String::from("hello");
+
+let r1 = &s;      // ✅
+let r2 = &s;      // ✅ 多个不可变引用
+// let r3 = &mut s; // ❌ 已有不可变引用时不能有可变引用
+
+println!("{} {}", r1, r2);
+// r1, r2 之后不再使用，下面才能借用可变引用
+
+let r3 = &mut s;  // ✅
+```
+
+## 第五章：Struct 与 Enum
+
+```rust
+struct User {
+    username: String,
+    email: String,
+    sign_in_count: u64,
+    active: bool,
+}
+
+fn main() {
+    let user = User {
+        username: String::from("zhangsan"),
+        email: String::from("zhangsan@example.com"),
+        sign_in_count: 1,
+        active: true,
+    };
+    println!("用户: {}", user.username);
+
+    // 解构更新
+    let user2 = User {
+        email: String::from("new@example.com"),
+        ..user  // 其余字段从 user 复制
+    };
+}
+
+// 元组结构体
+struct Color(i32, i32, i32);
+let black = Color(0, 0, 0);
+```
+
+### Enum 与模式匹配
+
+```rust
+enum Message {
+    Quit,
+    Move { x: i32, y: i32 },
+    Write(String),
+    ChangeColor(i32, i32, i32),
+}
+
+// Rust 没有 null，用 Option<T> 表示「可能有值」
+fn main() {
+    let some_number = Some(5);
+    let absent_number: Option<i32> = None;
+
+    // match 必须穷举所有可能
+    match some_number {
+        Some(n) => println!("有值: {}", n),
+        None => println!("没有值"),
+    }
+
+    // if let（只关心一种模式时）
+    if let Some(5) = some_number {
+        println!("值是 5");
+    }
+}
+```
+
+## 第六章：错误处理
+
+```rust
+// 可能失败的函数返回 Result<T, E>
+fn divide(a: f64, b: f64) -> Result<f64, String> {
+    if b == 0.0 {
+        Err(String::from("除数不能为 0"))
+    } else {
+        Ok(a / b)
+    }
+}
+
+fn main() {
+    // 方式一：match
+    match divide(10.0, 2.0) {
+        Ok(result) => println!("结果: {}", result),
+        Err(e) => println!("错误: {}", e),
+    }
+
+    // 方式二：unwrap（简单但会 panic）
+    let result = divide(10.0, 0.0).unwrap();
+    // 运行会 panic: called `Result::unwrap()` on an `Err` value
+
+    // 方式三：? 操作符（推荐，自动传播错误）
+    fn calculate() -> Result<f64, String> {
+        let a = divide(10.0, 2.0)?;  // Err 时自动 return
+        let b = divide(a, 3.0)?;
+        Ok(b)
+    }
+}
+```
+
+## 第七章：Cargo 与依赖管理
+
+```toml
+# Cargo.toml
+[package]
+name = "my-cli"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+clap = { version = "4", features = ["derive"] }
+reqwest = { version = "0.12", features = ["json"] }
+tokio = { version = "1", features = ["full"] }
+```
+
+```bash
+# 添加依赖
+cargo add serde --features derive
+cargo add clap --features derive
+
+# 构建（发布模式）
+cargo build --release
+```
+
+## 第八章：实战——写一个天气 CLI 工具
+
+```rust
+// src/main.rs
+use clap::Parser;
+use serde::Deserialize;
+
+#[derive(Parser)]
+#[command(name = "weather")]
+#[command(about = "查询当前天气")]
+struct Cli {
+    /// 城市名称（英文）
+    city: String,
+}
+
+#[derive(Deserialize)]
+struct WeatherResponse {
+    main: Main,
+    weather: Vec<Weather>,
+    name: String,
+}
+
+#[derive(Deserialize)]
+struct Main {
+    temp: f64,
+    humidity: u64,
+}
+
+#[derive(Deserialize)]
+struct Weather {
+    description: String,
+}
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let cli = Cli::parse();
+    let api_key = std::env::var("OPENWEATHER_API_KEY")
+        .expect("请设置 OPENWEATHER_API_KEY 环境变量");
+
+    let url = format!(
+        "https://api.openweathermap.org/data/2.5/weather?q={}&appid={}&units=metric",
+        cli.city, api_key
+    );
+
+    let response = reqwest::get(&url).await?;
+    let weather: WeatherResponse = response.json().await?;
+
+    println!("城市: {}", weather.name);
+    println!("温度: {:.1}°C", weather.temp);
+    println!("天气: {}", weather.weather[0].description);
+    println!("湿度: {}%", weather.main.humidity);
+
+    Ok(())
+}
+```
+
+```bash
+# 运行
+export OPENWEATHER_API_KEY=your_key_here
+cargo run -- "Beijing"
+# 输出:
+# 城市: Beijing
+# 温度: 28.5°C
+# 天气: clear sky
+# 湿度: 45%
+```
+
+## 避坑清单
+
+| 坑 | 正确做法 |
+|----|---------|
+| 不理解所有权就硬写 | 先理解「一个值只有一个所有者」和「移动语义」，这是 Rust 的基石 |
+| 频繁 clone | 能用引用/借用就别 clone。clone 不是代码味，但过度 clone 影响性能 |
+| 忽略了 `?` 操作符 | 用 `?` 代替 `unwrap`，优雅传播错误而不是 panic |
+| 所有变量都 mut | 能用不可变就用不可变，编译器会告诉你什么时候需要 mut |
+| 不理解生命周期标注 | 初学者先避开复杂生命周期。多数函数不需要手动标注，编译器会推导 |
+| 用 `&str` 代替 `String` 做参数 | 函数参数用 `&str`（接受更多类型），需要所有权时用 `String` |
+| 忽略 clippy | 用 `cargo clippy` 检查代码质量，新手常见问题 clippy 都会提醒 |
+| 在 hot path 上用慢数据结� | Vec 的插入/删除在中间是 O(n)，需要频繁插入用 LinkedList 或 VecDeque |
+| 忘了 use 和模块系统 | Rust 的模块要用 `mod`、`use`、`pub` 显式导入，不像 JS 自动 import |
+| 用 unsafe 绕过编译器 | unsafe 不代表「不安全代码」，只是需要你手动保证安全规则。新手不要用 |
+
+## 小结
+
+Rust 的学习曲线确实陡峭——主要原因是**所有权**这个独特概念需要转变思维方式。但一旦跨过这个坎，你会发现编译器是你最好的朋友，它在编译时就把内存错误、并发错误全部拦住了。
+
+学习 Rust 的推荐路径：
+
+```text
+1. 读完《Rust 程序设计语言》（The Book）的前 10 章
+2. 写完上面这个天气 CLI 工具
+3. 用 Rust 重写一个你熟悉的小项目
+4. 关注 Rust 标准库的迭代器、trait、并发特性
+5. 尝试在真实项目中使用 Rust（Node.js 高性能模块、CLI 工具、WebAssembly）
+
+Rust 不适合所有人，但适合追求「性能 + 安全」的系统级开发者。
+```
+
+你刚装好了 Rust，写完了第一个程序，理解所有权和借用的基本概念，并且用 100 行代码写了一个可运行的 CLI 工具。接下来，花时间写一个小项目（如重写一个 Node.js 脚本为 Rust），比读十篇教程都管用。
