@@ -1,0 +1,239 @@
+---
+title: "OpenCode 2.0 Beta + Desktop v2：开源 AI 编程代理的大版本升级"
+description: "深度解读 OpenCode 近期的两大变化：Desktop v2（v1.18.0 桌面端完全重写，7 月 14 日稳定发布）和 OpenCode 2.0 beta（未来核心 CLI/Server/Runtime 架构升级，需 npm install -g @opencode-ai/cli@next）。从背景 subagent、可审查权限策略、可移植 Skills 系统、快照与压缩、HTTP API 等维度全面分析，附上「现在该不该升级」的建议。"
+category: tech
+tags: ["OpenCode", "AI编程代理", "开源", "Desktop v2", "Agent", "Skills", "CLI"]
+date: 2026-07-23
+draft: false
+cover: "https://images.unsplash.com/photo-1635070041078-e363dbe005cb?w=1200&h=630&fit=crop"
+---
+
+2026 年 7 月，OpenCode 迎来了两个重要的「v2」发布——但它们是两件不同的事，需要先分开：
+
+- **Desktop v2**：桌面端 UI 完全重写，已于 7 月 14 日在 v1.18.0 中稳定发布
+- **OpenCode 2.0 beta**：核心 CLI/Server/Runtime 架构升级，目前为 beta 阶段
+
+社区里「opencode 2.0 变化很大」的讨论，实际上是把这两件事放在一起说的。确实很大——但它们对不同用户的含义不同。
+
+## 先分清两个 v2
+
+```text
+Desktop v2（已稳定发布）
+├── 发布时间：v1.18.0，2026 年 7 月 14 日
+├── 当前版本：v1.18.3
+├── 安装方式：稳定版正常安装
+├── 性质：桌面端 UI 重写
+└── 数据：稳定，不丢失
+
+OpenCode 2.0 beta（进行中）
+├── 发布时间：beta 进行中
+├── 安装方式：npm install -g @opencode-ai/cli@next
+├── 运行命令：opencode2
+├── 性质：核心架构升级（新 server/client/plugin 架构）
+├── 数据：beta 期间可能会被清空
+└── 兼容性：V1 插件不兼容
+```
+
+## Desktop v2：桌面端重写
+
+Desktop v2 是 OpenCode 桌面应用从「套壳 TUI」变成真正桌面应用的转折点。v1.18.0 完成了迁移，v1.17.x 系列逐步引入了：
+
+**新功能：**
+
+- **浏览器风格标签页**：每个标签页一个独立会话，支持跨项目恢复
+- **重建的审查面板**：带持久文件浏览，不再来回切换
+- **集成终端改进**：更流畅的 shell 体验
+- **每个提示词选择模型**：不再全局固定一个模型
+- **服务器感知会话路由**：自动匹配最佳的服务器和模型
+
+**v1.18.0 完成项：**
+
+- 新旧布局切换设置（过渡期可选回旧版）
+- 首次启动引导 onboarding
+- 更快的冷启动加载
+- 时间线（Timeline）重连和回填
+- WSL 启动就绪优化
+
+**v1.18.3 新增：**
+
+- Home 页面滚动修复，粘性标题和会话列表行为正确
+- WSL 服务器加载状态包含在桌面应用就绪报告前
+- 自定义 agent 选择器可见性修复
+
+**一句话：** Desktop v2 让 OpenCode 从「终端 TUI 的桌面包装」变成了一个真正的桌面应用。
+
+## OpenCode 2.0 beta：架构级升级
+
+这是更大的故事。2.0 的核心理念可以用一句话概括：
+
+> **V1 是一个好的多提供商 CLI。V2 正在成为一个可检查、可编程的 agent 运行时。**
+
+不是「你运行的程序」，而是「你可以在上面构建的基础设施」。
+
+### 1. 背景 subagent + 生命周期管理
+
+V2 内置了两个主 agent（Build 和 Plan）和两个 subagent（General 和 Explore）。自定义 agent 可以声明为 `primary`、`subagent` 或 `all`。
+
+关键的架构选择：subagent 在**子会话**中运行，使用完全独立的上下文窗口，完成后交回摘要而非污染主对话。
+
+更重要的改进是**可见性和控制**——一个管理视图可以列出所有正在运行的任务，你可以将任务放入后台或直接杀死：
+
+```text
+├── Agent A（前台运行）✓
+├── Agent B（后台运行）  ← 可见，可杀死
+├── Agent C（后台运行）
+└── ── 点击 kill → Agent C 终止
+```
+
+大多数工具会乐意帮你启动 agent，但很少给你一个完整的生命周期视图。当某个 agent 明显在做错事时，你唯一的办法往往是 Ctrl-C 然后祈祷。一个能枚举运行中任务并提供 kill 开关的 UI，是把一个系统变成**可操作**的关键。
+
+### 2. 权限系统：从配置变成了策略
+
+V1 有一个分组的 permission 对象。V2 将其替换为**有序规则数组**：
+
+```json
+{
+  "permission": {
+    "rules": [
+      { "action": "read", "resource": "env/*", "effect": "deny" },
+      { "action": "shell", "resource": "*", "effect": "ask" },
+      { "action": "edit", "resource": "src/*", "effect": "allow" },
+      { "action": "*", "resource": "*", "effect": "ask" }
+    ]
+  }
+}
+```
+
+**每条规则 = 一个 action + 一个 resource + 一个 effect（allow / ask / deny），最后匹配的规则生效。**
+
+- Action：`read`、`edit`、`shell`、`subagent`、`skill`、web 工具、MCP 工具、外部目录
+- 每个 agent 可以有自己的规则（追加到全局规则之后）
+- 工作区之外的目录有独立的权限边界
+- 配置为 `deny` 的规则无法通过交互式批准覆盖——写下的策略就真的不可绕过
+
+如果你写过防火墙规则、IAM 策略或 `sudoers` 配置，你知道这种模式为什么优于现在的方案。绝大多数 AI 编程工具的现状是「友善地请模型待在自己的车道里，希望系统提示词能管住它」。一个是控制，一个是许愿。
+
+### 3. Skills 系统：可移植的指令包
+
+Skills 是 Markdown 指令文件，存放在 `.opencode/skills/` 或 `~/.config/opencode/skills/`，agent 按需加载。
+
+```markdown
+---
+name: git-release
+description: Create consistent releases and changelogs
+---
+
+## What I do
+- Draft release notes from merged PRs
+- Propose a version bump
+- Provide a copy-pasteable `gh release create` command
+```
+
+**关键特性：**
+
+- Skills 按 ID、名称和描述被**广告**给模型，而不是把每个 skill 的全文塞进提示词——区别在于「扩展超过十几个后还能正常工作」和「悄悄吃掉你的上下文窗口」
+- Skills 可以附带脚本和参考资料
+- 可以通过斜杠命令直接调用 `/deploy`
+- 受权限系统统一管理
+- **可移植性**：V2 会读取 `.claude/skills`、`~/.claude/skills`、`.agents/skills` 等目录——团队已有的技能可以跨平台复用
+
+### 4. 快照（Snapshots）+ 压缩（Compaction）
+
+**快照**：默认开启，在每次模型调用前和完成步骤后自动捕获工作树状态，使用**独立的内部 Git 对象数据库**写入。
+
+- 不在你的仓库中创建 commit
+- 不移动你的分支
+- `/undo` 恢复对话和文件
+- `/redo` 恢复撤销的内容
+
+**限制（官方坦诚地说明了）：** 最佳努力（best effort），不逆转外部副作用——数据库、服务、网络资源、Git 操作、忽略的构建输出、工作区外的文件。如果 agent 执行了数据库迁移或推送了分支，快照救不了你。
+
+**压缩**：构建旧上下文的结构化检查点，在模型调用前（而不是失败后）自动评估上下文压力，在上下文溢出时自动压缩并重试。
+
+检查点捕获：目标、重要细节、已完成和进行中的工作、阻塞项、下一步、相关文件。这种检查点模式本质上是「你去度假前写的手册」——正确的设计意见。
+
+### 5. HTTP API：整个架构的故事
+
+V2 暴露了完整的 HTTP API 和生成的 TypeScript 客户端（`@opencode-ai/client@next`）：
+
+```text
+API 覆盖：
+├── 会话管理（创建、发送、中断、等待空闲）
+├── 持久化历史
+├── 事件流
+├── 模型和提供商
+├── 权限
+├── 问题和表单
+├── PTY 会话和 Shell 进程管理
+├── Skills 和 MCP
+├── 文件系统访问
+├── 快照和回退
+└── VCS 状态和 Diff
+```
+
+同一个 server 支持 TUI 和桌面应用，并记录为**自定义客户端和内嵌到你自己工具中的方式**。Node service API 可以发现、启动和停止本地的后台 OpenCode 服务。
+
+```text
+V1 看起来像一个应用。
+V2 看起来像基础设施。
+```
+
+等待空闲、流事件、持久化历史、Shell 进程管理、快照——这不是一个终端应用的特征，这是一个**可嵌入、可自动化、可观察、可编写脚本的 agent 运行时**。
+
+## 什么时候可以用
+
+### Desktop v2：现在就可以
+
+```bash
+npm install -g opencode-ai
+# 或
+brew install anomalyco/tap/opencode
+```
+
+v1.18.3 已经稳定发布，可以在桌面端直接体验新 UI。
+
+### OpenCode 2.0 beta：尝鲜需谨慎
+
+```bash
+npm install -g @opencode-ai/cli@next
+opencode2
+```
+
+**已知问题：**
+
+- Beta 数据可能被清空
+- V1 插件不兼容
+- 安装方式仅限于 npm/Bun/pnpm/Yarn（无 curl 安装、无 Homebrew、无独立二进制）
+- 插件和 SDK 合约仍在最终确定中
+- 自定义命令的 `subtask` 字段目前被忽略
+
+**好消息：** `opencode`（V1）和 `opencode2`（V2 beta）可以在同一台机器上共存。这不是需要你「迁移」的决策——你可以同时保留两者。
+
+## 避坑清单
+
+| 坑 | 正确做法 |
+|----|---------|
+| 分不清 Desktop v2 和 OpenCode 2.0 | Desktop v2 是桌面 UI 重写（已稳定）；2.0 beta 是核心架构升级（beta 中） |
+| 在 beta 上跑生产工作 | Beta 数据可能被清空，V1 插件不兼容，只适合尝鲜评估 |
+| 以为快照能回滚所有操作 | 快照只恢复工作树和文件，不恢复数据库、服务、Git 推送等外部副作用 |
+| 把 skills 全文塞进提示词 | V2 的 skills 按 ID/名称/描述广告，不要手动拼接全文到提示词中 |
+| 忽略权限的 `deny` 可绕过风险 | V2 的 `deny` 不可通过交互式批准覆盖，这正是它比 V1 强的地方 |
+| 等 curl 安装脚本 | Beta 只支持 npm/Bun/pnpm/Yarn 安装 |
+| 跳过迁移文档 | 从 V1 迁移到 2.0 beta 有专门文档，先读再操作 |
+| 期待 skills 生态一夜建成 | 生态需要时间，但 V2 兼容 `.claude/skills` 格式，已有技能可直接复用 |
+| 以为 provider 中立 = 数据不上传 | 你的模型提供商仍然会收到你发送的内容（受它们的政策约束） |
+
+## 小结
+
+OpenCode 近期的两个「v2」变化合在一起，构成了一个重要的转折点：
+
+```text
+Desktop v2：从「终端 TUI 的桌面包装」变成了真正的桌面应用
+OpenCode 2.0：从「好用的多提供商 CLI」变成了「可编程的 agent 运行时」
+```
+
+- **如果你用桌面端**：升级到 v1.18.3，体验新 UI
+- **如果你构建 agent 工具链**：现在安装 2.0 beta 评估，关注 HTTP API 和 Skills 系统
+- **如果你依赖 V1 插件**：等 2.0 稳定版，在此之前 V1 照常运行
+
+V2 的核心理念——可检查、可编程、可嵌入——让 OpenCode 从 Claude Code 的「免费替代品」变成了一个真正独立的、有自己哲学的产品。社区对它的讨论不是空穴来风。
