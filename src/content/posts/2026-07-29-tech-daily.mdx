@@ -1,0 +1,359 @@
+---
+title: "Elasticsearch 入门：倒排索引、CRUD 与全文检索实战"
+description: "从零掌握 Elasticsearch：倒排索引原理、文档与索引概念、REST API 的增删改查、分词器与映射、全文检索（match/multi_match/term/range）、聚合分析、与 MySQL 的对比及同步策略。配大量可运行的 curl 示例，附一份 Elasticsearch 避坑清单。"
+category: tech
+tags: ["Elasticsearch", "搜索引擎", "全文检索", "倒排索引", "ELK", "大数据"]
+date: 2026-07-29
+draft: false
+cover: "https://images.unsplash.com/photo-1550686041-366ad85a1355?w=1200&h=630&fit=crop"
+---
+
+搜索框背后站着的，通常是 Elasticsearch（简称 ES）。它是一个**基于 Lucene 的分布式搜索引擎**，能对海量数据做毫秒级全文检索。
+
+```text
+核心能力：
+全文检索：对文本做模糊/相关度搜索（跟 SQL 的 LIKE 完全不同）
+聚合分析：分组、统计、指标计算（相当于 SQL 的 GROUP BY）
+分布式：水平扩展，PB 级数据没问题
+实时性：写入后近实时（约 1 秒）可查
+
+典型场景：站内搜索、日志分析（ELK）、电商商品搜索、监控告警
+```
+
+## 第一章：倒排索引——ES 的灵魂
+
+SQL 的 `LIKE '%关键词%'` 是全表扫描，数据量大就慢。ES 用的是**倒排索引**：
+
+```text
+先分词，再建立「词 → 文档」的映射：
+
+文档1：「我爱北京天安门」
+文档2：「北京欢迎你」
+文档3：「天安门上太阳升」
+
+分词后建索引：
+
+北京 → 文档1, 文档2
+天安门 → 文档1, 文档3
+欢迎 → 文档2
+太阳 → 文档3
+
+查询「北京」：
+1. 分词得到「北京」
+2. 查倒排索引 → 找到文档1、文档2
+3. 计算相关度排序
+
+复杂度从 O(全表) 降到 O(词条数量)
+```
+
+**与 MySQL 对比：**
+
+| 对比 | MySQL | Elasticsearch |
+|------|-------|---------------|
+| 查询方式 | `LIKE '%xx%'` 全表扫 | 倒排索引 + 相关度 |
+| 中文搜索 | 差（无分词） | 好（IK 分词器） |
+| 海量数据 | 千万级开始吃力 | 十亿级没问题 |
+| 聚合分析 | 慢 | 快（内置优化） |
+| 事务 | 强 ACID | 弱（最终一致） |
+| 适用 | 业务数据主存储 | 搜索与分析 |
+
+**定位：ES 不是用来替代 MySQL，而是做「搜索层」。MySQL 存事实，ES 建索引。**
+
+## 第二章：安装与启动
+
+```bash
+# Docker 一键启动（推荐）
+docker run -d --name es -p 9200:9200 -p 9300:9300 \
+  -e "discovery.type=single-node" \
+  -e "xpack.security.enabled=false" \
+  -e "ES_JAVA_OPTS=-Xms512m -Xmx512m" \
+  -m 1g \
+  docker.elastic.co/elasticsearch/elasticsearch:8.14.0
+
+# 验证
+curl http://localhost:9200
+# 返回类似：
+# { "name": "...", "cluster_name": "elasticsearch", "version": {...} }
+```
+
+**核心概念类比（跟数据库对应）：**
+
+```text
+MySQL       Elasticsearch
+Database  → Index（索引）
+Table     → Index（索引）里没有严格表概念
+Row       → Document（文档）
+Column    → Field（字段）
+Schema    → Mapping（映射）
+GROUP BY  → Aggregation（聚合）
+```
+
+> 注意：ES 的「Index」不是数据库里的索引，而相当于「表」的容器概念。命名容易混淆，牢记这个对应关系。
+
+## 第三章：CRUD——REST API 实战
+
+```bash
+# ---- 写入（创建/覆盖）----
+curl -X PUT 'localhost:9200/products/_doc/1' -H 'Content-Type: application/json' -d '
+{
+  "title": "iPhone 15 Pro",
+  "brand": "Apple",
+  "price": 8999,
+  "stock": 100,
+  "description": "钛金属机身，A17 Pro 芯片，操作按钮"
+}'
+
+# 自动生成 id（POST）
+curl -X POST 'localhost:9200/products/_doc' -H 'Content-Type: application/json' -d '
+{
+  "title": "MacBook Pro 16",
+  "brand": "Apple",
+  "price": 21999,
+  "stock": 50,
+  "description": "M3 Max 芯片，深空黑色"
+}'
+
+# ---- 查询单个 ----
+curl 'localhost:9200/products/_doc/1'
+
+# ---- 更新（部分更新）----
+curl -X POST 'localhost:9200/products/_update/1' -H 'Content-Type: application/json' -d '
+{
+  "doc": { "price": 8499, "stock": 80 }
+}'
+
+# ---- 删除 ----
+curl -X DELETE 'localhost:9200/products/_doc/1'
+
+# ---- 批量写入（_bulk，性能关键）----
+curl -X POST 'localhost:9200/_bulk' -H 'Content-Type: application/json' -d '
+{"index":{"_index":"products"}}
+{"title":"iPad Pro","brand":"Apple","price":7999}
+{"index":{"_index":"products"}}
+{"title":"Galaxy S24","brand":"Samsung","price":6999}
+'
+```
+
+## 第四章：分词器与映射（Mapping）
+
+**分析（Analysis）流程：**
+
+```text
+原始文本「我爱北京天安门」
+  → 字符过滤器（去 HTML 标签等）
+  → 分词器 Tokenizer（按中文切词）
+  → Token 过滤器（转小写、去停用词）
+  → 输出词项：我 | 爱 | 北京 | 天安门
+```
+
+**中文必须装 IK 分词器：**
+
+```bash
+# ES 自带 standard 分词器对中文只会按字切分，效果差
+# 安装 ik 分词器（Docker 方式）
+docker exec es bin/elasticsearch-plugin install \
+  https://github.com/medcl/elasticsearch-analysis-ik/releases/download/v8.14.0/elasticsearch-analysis-ik-8.14.0.zip
+
+# 重启后验证
+curl -X POST 'localhost:9200/_analyze' -H 'Content-Type: application/json' -d '
+{ "analyzer": "ik_max_word", "text": "我爱北京天安门" }
+'
+# 输出：我 | 爱 | 北京 | 天安门
+```
+
+**自定义映射：**
+
+```bash
+# 创建带映射的索引（建好后就别随便改类型了）
+curl -X PUT 'localhost:9200/products' -H 'Content-Type: application/json' -d '
+{
+  "mappings": {
+    "properties": {
+      "title": {
+        "type": "text",
+        "analyzer": "ik_max_word",    # 写入时用最细切分
+        "search_analyzer": "ik_smart"  # 搜索时用粗切分（更准）
+      },
+      "brand":  { "type": "keyword" },  # keyword 不分词，用于精确匹配/聚合
+      "price":  { "type": "integer" },
+      "stock":  { "type": "integer" },
+      "description": {
+        "type": "text",
+        "analyzer": "ik_max_word"
+      }
+    }
+  }
+}'
+```
+
+**text vs keyword：**
+
+| 类型 | 是否分词 | 用途 |
+|------|---------|------|
+| `text` | 分词 | 全文搜索（title、content） |
+| `keyword` | 不分词 | 精确匹配、排序、聚合（tag、brand、status） |
+
+## 第五章：查询 DSL——全文检索实战
+
+```bash
+# ---- match：全文搜索（分词后匹配）----
+curl -X POST 'localhost:9200/products/_search' -H 'Content-Type: application/json' -d '
+{
+  "query": {
+    "match": { "title": "手机" }
+  }
+}'
+
+# ---- multi_match：多字段搜索 ----
+curl -X POST 'localhost:9200/products/_search' -H 'Content-Type: application/json' -d '
+{
+  "query": {
+    "multi_match": {
+      "query": "苹果",
+      "fields": ["title^3", "description"]   # title 权重高 3 倍
+    }
+  }
+}'
+
+# ---- term：精确匹配（keyword 字段）----
+curl -X POST 'localhost:9200/products/_search' -H 'Content-Type: application/json' -d '
+{
+  "query": {
+    "term": { "brand": "Apple" }
+  }
+}'
+
+# ---- range：范围查询 ----
+curl -X POST 'localhost:9200/products/_search' -H 'Content-Type: application/json' -d '
+{
+  "query": {
+    "range": {
+      "price": { "gte": 5000, "lte": 10000 }
+    }
+  }
+}'
+
+# ---- bool：组合查询（must/should/must_not）----
+curl -X POST 'localhost:9200/products/_search' -H 'Content-Type: application/json' -d '
+{
+  "query": {
+    "bool": {
+      "must":   [ { "match": { "title": "手机" } } ],
+      "filter": [ { "range": { "price": { "lte": 10000 } } } ],
+      "must_not": [ { "term": { "brand": "Samsung" } } ]
+    }
+  },
+  "sort": [ { "price": "asc" } ],
+  "from": 0,
+  "size": 20
+}'
+
+# ---- 高亮 ----
+curl -X POST 'localhost:9200/products/_search' -H 'Content-Type: application/json' -d '
+{
+  "query": { "match": { "title": "手机" } },
+  "highlight": {
+    "fields": { "title": {} }
+  }
+}'
+```
+
+**bool 查询逻辑：**
+
+```text
+must：必须满足（相当于 AND）
+should：满足其一加分（相当于 OR）
+filter：必须满足但不计分（性能更好，适合过滤）
+must_not：必须不满足（相当于 NOT）
+```
+
+## 第六章：聚合分析（相当于 GROUP BY）
+
+```bash
+# ---- 按品牌分组统计数量 ----
+curl -X POST 'localhost:9200/products/_search' -H 'Content-Type: application/json' -d '
+{
+  "size": 0,   # 不返回文档
+  "aggs": {
+    "by_brand": {
+      "terms": { "field": "brand", "size": 10 }
+    }
+  }
+}'
+
+# ---- 价格范围 + 平均价 ----
+curl -X POST 'localhost:9200/products/_search' -H 'Content-Type: application/json' -d '
+{
+  "size": 0,
+  "aggs": {
+    "avg_price": { "avg": { "field": "price" } },
+    "price_histogram": {
+      "histogram": { "field": "price", "interval": 2000 }
+    }
+  }
+}'
+```
+
+## 第七章：与 MySQL 的数据同步
+
+**常见架构：MySQL 写、ES 查。怎么同步？**
+
+```text
+方案1：双写（应用层）
+  写 MySQL 的同时写 ES
+  缺点：两步都可能失败，一致性难保证
+
+方案2：Binlog 监听（推荐，如 Canal / Debezium）
+  MySQL binlog → 解析 → 写入 ES
+  优点：解耦、不侵入业务代码、基本实时
+
+方案3：定时全量 + 增量
+  每 5 分钟同步一次增量
+  优点：实现简单；缺点：有延迟
+
+方案4：专用同步工具（Logstash JDBC）
+  Logstash 定时拉取 MySQL 数据灌进 ES
+```
+
+**最佳实践：**
+
+```text
+MySQL 是事实来源（Source of Truth）
+ES 只是检索副本（可随时重建）
+ES 索引损坏/丢失不可怕，从 MySQL 重灌即可
+删除 MySQL 数据时同步删除 ES（或软删 + 定期清理）
+```
+
+## 避坑清单
+
+| 坑 | 正确做法 |
+|----|---------|
+| 用 `term` 查 text 字段 | text 已分词，精确匹配要用 keyword 字段 |
+| Mapping 建好后改字段类型 | 建索引前先设计好 Mapping，改类型需重建索引（reindex） |
+| 中文搜索没结果 | 装 IK 分词器，否则中文按字切分搜不准 |
+| 大量单条写入 | 用 `_bulk` 批量写，性能差 10 倍以上 |
+| 不设分片/副本策略 | 小集群单分片即可；副本 = 数据冗余 + 读扩展 |
+| 默认 mapping 一把梭 | 正式环境显式定义 Mapping，别用 dynamic 自动映射 |
+| 查询返回大文档 | 用 `_source` 过滤或只选字段，省带宽 |
+| 生产环境开了安全但没配认证 | 至少配 basic auth，ES 默认无鉴权很危险 |
+| 忘记 `size: 0` 做聚合 | 聚合只需结果时加 `size: 0`，否则白传大量文档 |
+| 深分页 `from` 拉很大 | 大数据用 search_after 或 scroll，from 深了性能爆炸 |
+| 中文分词结果不对 | 用 `_analyze` API 调试分词，确认 `ik_max_word` 生效 |
+| 一台机器 ES 内存吃满 | 设置 `ES_JAVA_OPTS`，堆别超过物理内存一半 |
+
+## 小结
+
+```text
+原理：倒排索引 = 词 → 文档映射，搜词直达
+概念：Index≈表、Document≈行、Mapping≈Schema
+中文：必须 IK 分词器
+查询：match(分词)/term(精确)/range/bool(组合)
+聚合：aggs 相当于 GROUP BY
+同步：MySQL 写、ES 查，用 binlog 监听解耦
+
+定位：ES 是搜索层，MySQL 是存储层，别让 ES 当唯一数据源
+```
+
+Elasticsearch 的核心就一句话：**把文本切成词，建好「词→文档」的索引，查询时按词检索并打分排序**。理解倒排索引，你就理解了 ES 的一切。
+
+下一步可以深入：Kibana 可视化、Logstash 日志管道（合称 ELK）、ES 集群扩容与分片调优、以及 `search_after` 分页和相关性调优（boost、function_score）。这些能让你从「会用」进阶到「用得好」。

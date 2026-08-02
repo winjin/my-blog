@@ -1,0 +1,366 @@
+---
+title: "Python FastAPI 入门：从零写一个高性能 API"
+description: "由浅入深掌握 FastAPI：为什么选它、路由与请求参数、Pydantic 数据校验、依赖注入、异步支持、自动文档、JWT 鉴权、数据库集成。从零写一个带用户认证和 CRUD 的待办清单 API，附一份 FastAPI 避坑清单。"
+category: tech
+tags: ["Python", "FastAPI", "后端", "API", "Pydantic", "入门"]
+date: 2026-07-31
+draft: false
+cover: "https://images.unsplash.com/photo-1550751827-4bd374c3f58b?w=1200&h=630&fit=crop"
+---
+
+Python 写后端，过去大家第一反应是 Django 或 Flask。但 2018 年出现的 **FastAPI** 改变了格局——它用极简的代码换来高性能（基于 Starlette + Pydantic）和开箱即用的 API 文档。
+
+```text
+FastAPI 的三个杀手锏：
+1. 自动文档：写好接口就有 Swagger UI，不用手动维护
+2. 类型校验：用 Python 类型注解 + Pydantic，自动校验参数
+3. 高性能：基于 async/await，吞吐接近 Go/Node
+
+生态关键词：
+FastAPI + Uvicorn（服务器） + Pydantic（校验） + SQLAlchemy（ORM）
+```
+
+## 第一章：项目搭建
+
+```bash
+# 创建项目
+mkdir fastapi-todo && cd fastapi-todo
+python -m venv venv
+source venv/bin/activate
+
+# 安装依赖
+pip install fastapi uvicorn
+pip install "uvicorn[standard]"   # 包含性能优化（httptools 等）
+
+# 项目结构
+.
+├── main.py           # 入口
+├── models.py         # 数据模型
+├── schemas.py        # 请求/响应校验
+├── database.py       # 数据库连接
+├── auth.py           # 认证逻辑
+└── requirements.txt
+```
+
+## 第二章：Hello World
+
+```python
+# main.py
+from fastapi import FastAPI
+
+app = FastAPI(title="待办清单 API", version="0.1.0")
+
+@app.get("/")
+def root():
+    return {"message": "Hello FastAPI"}
+
+@app.get("/health")
+def health():
+    return {"status": "ok"}
+```
+
+```bash
+# 启动开发服务器（--reload 热重载）
+uvicorn main:app --reload --port 8000
+
+# 打开以下地址：
+# 文档（Swagger UI）： http://localhost:8000/docs
+# 备用文档（ReDoc）：  http://localhost:8000/redoc
+# 接口：               http://localhost:8000/health
+```
+
+**API 文档是自动生成的**——只要你定义了路由和类型，Swagger UI 就自动呈现，还能直接在页面上调试接口。这对比手写 Swagger 是降维打击。
+
+## 第三章：路径参数与请求参数
+
+```python
+from fastapi import FastAPI, Query, Path, Body
+
+app = FastAPI()
+
+# ---- 路径参数：/todos/123 ----
+@app.get("/todos/{todo_id}")
+def get_todo(todo_id: int):   # 类型注解 → 自动校验并转类型
+    return {"todo_id": todo_id, "title": f"待办 {todo_id}"}
+
+# ---- 查询参数：/todos?status=done&page=2 ----
+@app.get("/todos")
+def list_todos(
+    status: str | None = None,       # 可选参数，默认 None
+    page: int = Query(1, ge=1),      # 大于等于 1
+    limit: int = Query(10, ge=1, le=100),  # 1~100
+):
+    return {"status": status, "page": page, "limit": limit, "items": []}
+
+# ---- 路径参数带校验 ----
+@app.get("/todos/date/{year}/{month}")
+def by_date(
+    year: int = Path(ge=2020, le=2030),
+    month: int = Path(ge=1, le=12),
+):
+    return {"year": year, "month": month}
+```
+
+**参数三种来源：**
+
+```text
+路径参数：/todos/{id} → 路径里声明
+查询参数：?page=2 → 函数参数默认值
+请求体：JSON body → Pydantic 模型
+```
+
+## 第四章：Pydantic 数据校验
+
+FastAPI 的灵魂是 **Pydantic**——用类型注解定义数据结构，自动校验和序列化。
+
+```python
+# schemas.py
+from pydantic import BaseModel, Field, EmailStr, ConfigDict
+
+# 请求模型（创建待办）
+class TodoCreate(BaseModel):
+    title: str = Field(min_length=1, max_length=200)
+    description: str | None = None
+    priority: int = Field(default=1, ge=1, le=5)
+
+# 响应模型
+class Todo(BaseModel):
+    model_config = ConfigDict(from_attributes=True)  # 支持从 ORM 对象转换
+    id: int
+    title: str
+    description: str | None
+    priority: int
+    done: bool = False
+
+# 更新模型（部分字段可选）
+class TodoUpdate(BaseModel):
+    title: str | None = Field(default=None, min_length=1)
+    done: bool | None = None
+```
+
+```python
+# main.py 中使用模型
+from fastapi import FastAPI, HTTPException
+from schemas import TodoCreate, Todo
+
+app = FastAPI()
+
+todos_db = {}   # 内存存储（演示用）
+counter = 1
+
+@app.post("/todos", response_model=Todo, status_code=201)
+def create_todo(todo: TodoCreate):      # 自动校验请求体
+    global counter
+    item = Todo(id=counter, **todo.model_dump())
+    todos_db[counter] = item
+    counter += 1
+    return item                          # 自动按 response_model 序列化
+
+@app.get("/todos/{todo_id}", response_model=Todo)
+def get_todo(todo_id: int):
+    if todo_id not in todos_db:
+        raise HTTPException(status_code=404, detail="待办不存在")
+    return todos_db[todo_id]
+
+@app.patch("/todos/{todo_id}", response_model=Todo)
+def update_todo(todo_id: int, todo: TodoUpdate):
+    if todo_id not in todos_db:
+        raise HTTPException(status_code=404, detail="待办不存在")
+    item = todos_db[todo_id]
+    data = todo.model_dump(exclude_unset=True)   # 只取更新的字段
+    for k, v in data.items():
+        setattr(item, k, v)
+    return item
+```
+
+**Field 校验威力：**
+
+```python
+from pydantic import BaseModel, Field, EmailStr, field_validator
+
+class UserRegister(BaseModel):
+    email: EmailStr                     # 自动校验邮箱格式
+    password: str = Field(min_length=8, max_length=64)
+    age: int = Field(ge=0, le=150)
+
+    @field_validator("password")
+    @classmethod
+    def password_strength(cls, v):
+        if not any(c.isdigit() for c in v):
+            raise ValueError("密码必须包含数字")
+        return v
+```
+
+**无效请求自动返回 422：**
+
+```json
+// POST /todos 传了 title 为空 → 自动返回 422
+{
+  "detail": [
+    {
+      "loc": ["body", "title"],
+      "msg": "String should have at least 1 character",
+      "type": "string_too_short"
+    }
+  ]
+}
+```
+
+## 第五章：依赖注入（Dependency Injection）
+
+FastAPI 的依赖系统是它的另一个强项——自动解析、复用、管理生命周期：
+
+```python
+from fastapi import Depends, Header, HTTPException, status
+
+# 依赖函数：解析当前用户（鉴权逻辑复用）
+def get_current_user(authorization: str = Header(None)):
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="未登录",
+        )
+    token = authorization.split(" ")[1]
+    user = verify_token(token)     # 校验 token（假实现）
+    if not user:
+        raise HTTPException(status_code=401, detail="token 无效")
+    return user
+
+# 路由中注入依赖
+@app.get("/me")
+def get_me(user: dict = Depends(get_current_user)):
+    return {"user": user}
+
+# 依赖嵌套：子依赖自动解析
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db          # yield = 请求结束自动清理
+    finally:
+        db.close()
+
+@app.get("/todos")
+def list_todos(db: Session = Depends(get_db), user=Depends(get_current_user)):
+    # 自动注入 db 连接 和 已登录用户
+    return db.query(TodoModel).all()
+```
+
+## 第六章：JWT 鉴权完整示例
+
+```python
+# auth.py
+import jwt
+from datetime import datetime, timedelta
+from fastapi import Depends, HTTPException, status
+from fastapi.security import OAuth2PasswordBearer
+
+SECRET_KEY = "change-me-in-production"   # 生产用环境变量
+ALGORITHM = "HS256"
+TOKEN_EXPIRE_MINUTES = 60 * 24  # 1 天
+
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/token")
+
+def create_access_token(user_id: int) -> str:
+    payload = {
+        "sub": str(user_id),
+        "exp": datetime.utcnow() + timedelta(minutes=TOKEN_EXPIRE_MINUTES),
+    }
+    return jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
+
+def verify_token(token: str = Depends(oauth2_scheme)) -> dict:
+    credentials_exception = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="凭证无效或已过期",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        return payload
+    except jwt.PyJWTError:
+        raise credentials_exception
+
+# main.py 中登录接口
+@app.post("/token")
+def login(form_data: OAuth2PasswordRequestForm = Depends()):
+    user = authenticate(form_data.username, form_data.password)  # 查数据库
+    if not user:
+        raise HTTPException(status_code=400, detail="用户名或密码错误")
+    return {"access_token": create_access_token(user.id), "token_type": "bearer"}
+
+@app.get("/me", response_model=UserOut)
+def get_me(payload: dict = Depends(verify_token)):
+    user_id = int(payload["sub"])
+    return db.query(User).get(user_id)
+```
+
+## 第七章：异步与数据库
+
+**异步路由（处理 IO 密集任务）：**
+
+```python
+import httpx
+
+@app.get("/async-example")
+async def fetch_remote():
+    # async 不阻塞事件循环，可同时处理其他请求
+    async with httpx.AsyncClient() as client:
+        resp = await client.get("https://api.example.com/data")
+    return {"data": resp.json()}
+
+# 同步函数（阻塞 CPU 任务）会自动在线程池执行，不阻塞主循环
+```
+
+**用 SQLModel / SQLAlchemy 接数据库：**
+
+```python
+# database.py
+from sqlalchemy import create_engine, Column, Integer, String, Boolean
+from sqlalchemy.orm import declarative_base, sessionmaker
+
+DATABASE_URL = "sqlite:///./todos.db"
+engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
+SessionLocal = sessionmaker(bind=engine, autocommit=False, autoflush=False)
+Base = declarative_base()
+
+# models.py
+class TodoModel(Base):
+    __tablename__ = "todos"
+    id = Column(Integer, primary_key=True, index=True)
+    title = Column(String(200), nullable=False)
+    description = Column(String, nullable=True)
+    priority = Column(Integer, default=1)
+    done = Column(Boolean, default=False)
+```
+
+## 避坑清单
+
+| 坑 | 正确做法 |
+|----|---------|
+| 忘了 `venv` | 每个项目独立虚拟环境，`pip freeze > requirements.txt` |
+| 生产用 `uvicorn main:app`（不带 reload） | 开发 `--reload`，生产去掉，加 `--workers 4` |
+| Pydantic 模型忘了 `.model_dump()` | v2 中 `.dict()` 已废弃，转 dict 用 `.model_dump()` |
+| 同步代码全写 async | CPU 密集任务用同步函数（自动线程池），IO 密集才 async |
+| 把密钥写死在代码 | 用 `os.environ` / pydantic-settings 读环境变量 |
+| 返回 ORM 对象直接 `response_model` 报错 | 模型配 `model_config = ConfigDict(from_attributes=True)` |
+| 忽略状态码 | 创建用 201、删除用 204、错误用对应 4xx/5xx |
+| 全局 try/except 吞掉异常 | 用 FastAPI 异常处理器统一处理，开发期别吞日志 |
+| 没开 `--reload` 改代码不生效 | 开发服务器加 `--reload` |
+| 依赖循环导入 | 依赖注入用 `Depends()` 而非硬编码，schema/model 分文件 |
+| 查询参数该用 Path 用 Query | `/todos/{id}` 用 Path 校验，`?page=` 用 Query |
+| CORS 没配置 | 前后端分离时配 `CORSMiddleware`，否则浏览器跨域报错 |
+
+## 小结
+
+```text
+自动文档：写完接口就有 Swagger，零维护
+类型校验：注解 + Pydantic，参数/响应全自动校验
+依赖注入：鉴权、数据库连接复用，代码干净
+异步支持：async/await 高吞吐
+响应模型：response_model 保证输出结构稳定
+
+三件套：FastAPI（框架）+ Uvicorn（服务器）+ Pydantic（校验）
+```
+
+FastAPI 是当前 Python 写 API 的最优解之一：**代码量最少、文档自动、类型安全、性能够高**。你现在已经能写一个带鉴权、校验、CRUD 的完整 API。
+
+下一步可以深入：`SQLModel`（SQLAlchemy + Pydantic 一体）、`pytest` 写接口测试、`pydantic-settings` 管理配置、部署到 Docker + Uvicorn 多进程。FastAPI 的社区也在持续变大，值得长期投入。

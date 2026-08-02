@@ -1,0 +1,396 @@
+---
+title: "Vue 3 入门：组合式 API + TypeScript，从零写一个待办清单"
+description: "由浅入深讲解 Vue 3 的核心概念：响应式系统、组合式 API（setup、ref、reactive、computed、watch）、组件通信（props/emit）、生命周期。从零开始用 Vue 3 + TypeScript + Vite 搭建一个完整的待办清单应用（增删改查 + 本地持久化），附一份 Vue 避坑清单。"
+category: tech
+tags: ["Vue", "Vue3", "组合式API", "TypeScript", "前端", "Vite", "入门"]
+date: 2026-07-19
+draft: false
+cover: "https://images.unsplash.com/photo-1573164713988-8665fc963095?w=1200&h=630&fit=crop"
+---
+
+如果说 React 的核心是「函数 + State」，那 Vue 的核心就是「响应式 + 模板」。Vue 3 的标语是「The Progressive JavaScript Framework」（渐进式 JavaScript 框架）——它既可以做一个页面里的小组件，也能撑起整个企业级应用。
+
+Vue 3 相比 Vue 2 最大的变化是推出了**组合式 API（Composition API）**，把过去分散在 `data`、`computed`、`methods`、`watch` 中的逻辑，统一放进了 `setup` 函数里。
+
+## 第一章：项目搭建
+
+```bash
+# Vite 创建 Vue + TypeScript 项目
+npm create vite@latest my-todo-vue -- --template vue-ts
+cd my-todo-vue
+npm install
+npm run dev
+```
+
+项目结构：
+
+```text
+src/
+├── App.vue              # 根组件
+├── main.ts              # 入口
+├── components/
+│   ├── TodoItem.vue     # 单个待办项
+│   ├── TodoList.vue     # 待办列表
+│   └── AddTodo.vue      # 添加表单
+└── composables/
+    └── useTodos.ts      # 组合式函数
+```
+
+## 第二章：单文件组件（SFC）
+
+Vue 的核心单元是 `.vue` 单文件组件——把模板、逻辑、样式放在一个文件里：
+
+```vue
+<!-- App.vue -->
+<script setup lang="ts">
+// 逻辑区（组合式 API）
+import { ref } from 'vue'
+
+const message = ref('Hello Vue!')
+</script>
+
+<template>
+  <!-- 模板区（HTML 结构） -->
+  <h1>{{ message }}</h1>
+</template>
+
+<style scoped>
+/* 样式区（scoped 表示样式只作用于本组件） */
+h1 {
+  color: #42b883;
+}
+</style>
+```
+
+**三大区块：**
+
+| 区块 | 作用 | 说明 |
+|------|------|------|
+| `<script setup>` | 逻辑 | 直接写变量和函数，自动暴露给模板 |
+| `<template>` | 结构 | HTML 模板，`{{ }}` 做插值 |
+| `<style scoped>` | 样式 | `scoped` 属性实现样式隔离 |
+
+## 第三章：响应式核心——ref 和 reactive
+
+Vue 3 的魔法是**响应式**：数据变了，界面自动更新。
+
+```vue
+<script setup lang="ts">
+import { ref, reactive } from 'vue'
+
+// ref：包一层，用于基本类型和简单场景
+const count = ref(0)
+count.value = 1  // 通过 .value 读写
+
+// reactive：直接代理对象
+const user = reactive({
+  name: '张三',
+  age: 25,
+})
+user.age = 26  // 直接改
+
+// 模板中自动解包，不需要写 .value
+</script>
+
+<template>
+  <p>{{ count }}</p>       <!-- 自动解包 -->
+  <p>{{ user.name }}</p>
+</template>
+```
+
+**ref vs reactive 怎么选：**
+
+```text
+ref（推荐）：
+- 可包装任何类型（基本类型、对象、数组）
+- 用法统一，都通过 .value 读写
+- 在组合式函数中容易传递
+
+reactive：
+- 只支持对象和数组
+- 直接操作，不需要 .value
+- 解构会失去响应式（需要 toRefs 修复）
+```
+
+```vue
+<script setup lang="ts">
+import { reactive, toRefs } from 'vue'
+
+const state = reactive({
+  count: 0,
+  name: 'Vue',
+})
+
+// ❌ 直接解构会失去响应式
+// const { count } = state  // count 变成普通变量
+
+// ✅ 用 toRefs 保留响应式
+const { count, name } = toRefs(state)
+</script>
+```
+
+## 第四章：computed 和 watch
+
+```vue
+<script setup lang="ts">
+import { ref, computed, watch } from 'vue'
+
+const todos = ref([
+  { id: 1, text: '学习 Vue', done: false },
+  { id: 2, text: '写代码', done: true },
+])
+
+// computed：基于其他数据计算，有缓存
+const remaining = computed(() =>
+  todos.value.filter((t) => !t.done).length
+)
+
+// watch：监听变化，执行副作用
+watch(remaining, (newVal, oldVal) => {
+  console.log(`剩余任务从 ${oldVal} 变为 ${newVal}`)
+  // 可以做：保存到 localStorage、发送埋点等
+})
+
+// watch 监听多个数据
+watch([() => todos.value, () => remaining.value], () => {
+  console.log('数据变化了')
+})
+</script>
+
+<template>
+  <p>剩余任务: {{ remaining }}</p>
+</template>
+```
+
+## 第五章：组件通信——props 和 emit
+
+Vue 的组件通信遵循**单向数据流**：父组件通过 props 传数据下来，子组件通过 emit 发事件上去。
+
+```vue
+<!-- TodoItem.vue - 子组件 -->
+<script setup lang="ts">
+// 定义 props（带类型）
+const props = defineProps<{
+  id: number
+  text: string
+  done: boolean
+}>()
+
+// 定义事件（带类型）
+const emit = defineEmits<{
+  (e: 'toggle', id: number): void
+  (e: 'delete', id: number): void
+}>()
+
+function onToggle() {
+  emit('toggle', props.id)
+}
+</script>
+
+<template>
+  <li>
+    <input type="checkbox" :checked="done" @change="onToggle" />
+    <span :style="{ textDecoration: done ? 'line-through' : 'none' }">
+      {{ text }}
+    </span>
+    <button @click="emit('delete', id)">删除</button>
+  </li>
+</template>
+```
+
+```vue
+<!-- App.vue - 父组件 -->
+<script setup lang="ts">
+import TodoItem from './components/TodoItem.vue'
+
+function handleToggle(id: number) {
+  // 处理子组件发来的事件
+  console.log('切换任务:', id)
+}
+</script>
+
+<template>
+  <TodoItem
+    :id="1"
+    text="学习 Vue"
+    :done="false"
+    @toggle="handleToggle"
+    @delete="(id) => console.log('删除', id)"
+  />
+</template>
+```
+
+## 第六章：v-for 和 v-if 指令
+
+```vue
+<script setup lang="ts">
+import { ref } from 'vue'
+
+interface Todo {
+  id: number
+  text: string
+  done: boolean
+}
+
+const todos = ref<Todo[]>([])
+
+// 添加
+function addTodo(text: string) {
+  todos.value.push({
+    id: Date.now(),
+    text,
+    done: false,
+  })
+}
+
+// 过滤
+const filter = ref<'all' | 'active' | 'done'>('all')
+const filtered = computed(() => {
+  if (filter.value === 'active') return todos.value.filter((t) => !t.done)
+  if (filter.value === 'done') return todos.value.filter((t) => t.done)
+  return todos.value
+})
+</script>
+
+<template>
+  <!-- v-for 列表渲染，key 必须唯一 -->
+  <ul>
+    <li v-for="todo in filtered" :key="todo.id">
+      <span>{{ todo.text }}</span>
+    </li>
+  </ul>
+
+  <!-- v-if 条件渲染 -->
+  <p v-if="todos.length === 0">暂无待办，添加一个吧</p>
+  <p v-else>共 {{ todos.length }} 项</p>
+</template>
+```
+
+## 第七章：组合式函数（Composables）
+
+这是 Vue 3 最强大的模式——把可复用的逻辑抽成函数，类似 React 的自定义 Hook：
+
+```typescript
+// src/composables/useTodos.ts
+import { ref, computed, watch } from 'vue'
+
+export function useTodos() {
+  // 从 localStorage 初始化
+  const saved = localStorage.getItem('todos')
+  const todos = ref(saved ? JSON.parse(saved) : [])
+
+  // 数据变化时自动持久化
+  watch(todos, (val) => {
+    localStorage.setItem('todos', JSON.stringify(val))
+  }, { deep: true })
+
+  const remaining = computed(() =>
+    todos.value.filter((t) => !t.done).length
+  )
+
+  function addTodo(text: string) {
+    todos.value.push({ id: Date.now(), text, done: false })
+  }
+
+  function toggleTodo(id: number) {
+    const todo = todos.value.find((t) => t.id === id)
+    if (todo) todo.done = !todo.done
+  }
+
+  function deleteTodo(id: number) {
+    todos.value = todos.value.filter((t) => t.id !== id)
+  }
+
+  return { todos, remaining, addTodo, toggleTodo, deleteTodo }
+}
+```
+
+```vue
+<!-- App.vue 使用组合式函数 -->
+<script setup lang="ts">
+import { useTodos } from './composables/useTodos'
+
+const { todos, remaining, addTodo, toggleTodo, deleteTodo } = useTodos()
+</script>
+
+<template>
+  <h1>待办清单</h1>
+  <p>剩余: {{ remaining }}</p>
+  <AddTodo @add="addTodo" />
+  <TodoList
+    :todos="todos"
+    @toggle="toggleTodo"
+    @delete="deleteTodo"
+  />
+</template>
+```
+
+## 第八章：生命周期钩子
+
+```vue
+<script setup lang="ts">
+import { onMounted, onUnmounted, onUpdated } from 'vue'
+
+// 组件挂载到 DOM 后
+onMounted(() => {
+  console.log('组件已挂载')
+  // 这里做：发请求、初始化第三方库
+})
+
+// 组件更新后
+onUpdated(() => {
+  console.log('组件已更新')
+})
+
+// 组件卸载前
+onUnmounted(() => {
+  console.log('组件已卸载')
+  // 这里做：清理定时器、移除事件监听
+})
+</script>
+```
+
+**生命周期对照（setup 语法糖）：**
+
+| 选项式 API | 组合式 API | 时机 |
+|-----------|-----------|------|
+| `beforeMount` | `onBeforeMount` | 挂载前 |
+| `mounted` | `onMounted` | 挂载后（推荐） |
+| `beforeUpdate` | `onBeforeUpdate` | 更新前 |
+| `updated` | `onUpdated` | 更新后 |
+| `beforeUnmount` | `onBeforeUnmount` | 卸载前 |
+| `unmounted` | `onUnmounted` | 卸载后（推荐做清理） |
+
+## 避坑清单
+
+| 坑 | 正确做法 |
+|----|---------|
+| 忘记 `.value` | ref 在 `<script>` 里读写必须用 `.value`（模板中自动解包） |
+| reactive 解构丢失响应式 | 用 `toRefs` 解构，或直接用 ref 存对象 |
+| v-for 用 index 做 key | key 必须唯一且稳定，用 `id` 而非 `index`（否则列表复用会出错） |
+| 修改 prop 的值 | props 是只读单向的，要修改用 emit 通知父组件 |
+| watch 监听数组/对象不触发 | 加 `{ deep: true }` 监听深层变化 |
+| 在 setup 顶层用 await | 只有 `<Suspense>` 支持 async setup，普通场景用 `onMounted` 发请求 |
+| 忽略 scoped | 不加 scoped 的样式会全局泄漏，污染其他组件 |
+| 用选项式 API 写新项目 | 新项目用组合式 API + `<script setup>`，逻辑复用能力更强 |
+| 组件过大 | 用组合式函数（composables）拆分业务逻辑 |
+| 忘记清理副作用 | 定时器、监听器在 `onUnmounted` 里清理，防止内存泄漏 |
+
+## 小结
+
+Vue 3 的入门核心就三个关键词：**响应式、组件、组合式函数**。
+
+```text
+响应式（ref/reactive/computed/watch）
+  → 数据变了，界面自动更新
+组件（props 下 / emit 上）
+  → 单向数据流，组件像积木
+组合式函数（composables）
+  → 可复用逻辑，替代 mixin
+
+Vue 3 = 模板的直观 + TypeScript 的严谨 + 组合式 API 的灵活
+```
+
+你现在已经：用 Vite 搭好了项目、理解了 ref/reactive/computed/watch、写了一个带持久化的待办清单、还抽了 `useTodos` 组合式函数。
+
+Vue 3 的学习曲线比 React 平缓——模板语法更接近 HTML，新手很容易上手。但如果想深入了解，接下来建议学习：`provide/inject`（跨层级传数据）、`v-model`（双向绑定）、`Pinia`（状态管理）、`Vue Router`（路由）。把这些串起来，你就能写一个完整的 Vue 应用了。

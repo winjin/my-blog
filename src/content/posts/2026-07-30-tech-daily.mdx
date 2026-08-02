@@ -1,0 +1,380 @@
+---
+title: "GraphQL 入门：一次请求拿全部数据"
+description: "由浅入深掌握 GraphQL：与 REST 的对比、Schema 与类型系统、Query/Mutation/Subscription 三大操作、参数与变量、解析器（resolver）、前端客户端实践。用一个博客案例（文章、作者、评论）演示如何用 GraphQL 一次请求拿到完整数据，附一份 GraphQL 避坑清单。"
+category: tech
+tags: ["GraphQL", "API设计", "Node.js", "Apollo", "后端", "入门"]
+date: 2026-07-30
+draft: false
+cover: "https://images.unsplash.com/photo-1497366811353-6870744d04b2?w=1200&h=630&fit=crop"
+---
+
+你写过 REST API 吗？有没有遇到过这种尴尬：文章列表页需要文章 + 作者 + 评论数，但 REST 接口要么给少了（发三次请求），要么给多了（一次塞一堆用不到的字段）？
+
+**GraphQL** 的设计哲学就是解决这个问题：**客户端想要什么数据，就声明什么数据**，一次请求精确拿到。
+
+```text
+REST：每个资源一个端点，返回固定结构
+  GET /articles → 文章数组
+  GET /articles/1/author → 作者
+  GET /articles/1/comments → 评论数
+  （三次请求，或后端开一个超集的接口）
+
+GraphQL：一个端点，客户端声明想要什么
+  query {
+    articles {
+      title
+      author { name }
+      commentsCount
+    }
+  }
+  （一次请求，精确返回）
+```
+
+## 第一章：REST vs GraphQL
+
+| 对比 | REST | GraphQL |
+|------|------|---------|
+| 端点数量 | 多个（/articles、/comments...） | 通常 1 个（/graphql） |
+| 返回字段 | 服务器决定 | 客户端决定 |
+| 多次请求 | 嵌套数据要发多次 | 一次搞定 |
+| 过度获取 | 常见（返回一堆用不到的字段） | 不会（只给要的） |
+| 文档 | 手动写 Swagger | Schema 自带文档 |
+| 缓存 | 天然（HTTP 缓存） | 较复杂（需工具） |
+| 学习成本 | 低 | 中 |
+| 适用场景 | 简单/公开/强缓存 API | 复杂数据关系、BFF、多端 |
+
+```text
+一句话选择：
+项目简单、团队不熟 → REST
+数据关系复杂、客户端多（Web/iOS/Android）、想省流量 → GraphQL
+```
+
+## 第二章：Schema 与类型系统
+
+GraphQL 的一切从 **Schema**（类型定义）开始：
+
+```graphql
+# schema.graphql
+type Article {
+  id: ID!
+  title: String!
+  content: String
+  author: Author!          # 对象类型引用
+  comments: [Comment!]!    # 列表
+  commentsCount: Int!      # 计算字段
+  createdAt: String!
+}
+
+type Author {
+  id: ID!
+  name: String!
+  articles: [Article!]!
+}
+
+type Comment {
+  id: ID!
+  content: String!
+  author: Author!
+}
+
+# 查询入口
+type Query {
+  article(id: ID!): Article
+  articles(page: Int = 1, limit: Int = 10): [Article!]!
+  author(id: ID!): Author
+}
+
+# 修改入口
+type Mutation {
+  createArticle(input: CreateArticleInput!): Article!
+  addComment(articleId: ID!, content: String!): Comment!
+}
+
+input CreateArticleInput {
+  title: String!
+  content: String
+  authorId: ID!
+}
+```
+
+**类型系统要点：**
+
+```text
+标量类型：Int、Float、String、Boolean、ID
+对象类型：自定义结构（Article、Author）
+列表：   [Article!]!  感叹号是"非空"
+  Article 非空：列表里每一项都不能是 null
+  外层非空：    列表本身不能是 null
+输入类型：input（Mutation 传参用，区别于 type 返回结构）
+```
+
+## 第三章：三大操作——Query / Mutation / Subscription
+
+**Query（查询，相当于 GET）：**
+
+```graphql
+# 一次查询嵌套数据：文章 + 作者 + 评论
+query {
+  article(id: "1") {
+    title
+    author {
+      name
+      email
+    }
+    comments {
+      content
+      author { name }
+    }
+  }
+}
+```
+
+**Mutation（修改，相当于 POST/PUT/DELETE）：**
+
+```graphql
+mutation {
+  createArticle(input: {
+    title: "GraphQL 入门",
+    authorId: "u1"
+  }) {
+    id
+    title
+    createdAt
+  }
+}
+```
+
+**Subscription（订阅，实时推送）：**
+
+```graphql
+subscription {
+  newComment(articleId: "1") {
+    content
+    author { name }
+  }
+}
+# 新评论产生时，服务端实时推送
+```
+
+**变量：**把参数从请求里分离，方便复用和防注入：
+
+```graphql
+# 请求
+query GetArticle($id: ID!) {
+  article(id: $id) {
+    title
+    author { name }
+  }
+}
+
+# 变量区
+# { "id": "1" }
+```
+
+## 第四章：解析器（Resolver）——后端怎么实现
+
+Schema 只定义「是什么」，**resolver** 定义「怎么拿到数据」：
+
+```javascript
+// Node.js + Apollo Server
+const { ApolloServer } = require('@apollo/server');
+const { startStandaloneServer } = require('@apollo/server/standalone');
+
+// 内存数据（实际项目中查数据库）
+const articles = [
+  { id: '1', title: 'GraphQL 入门', authorId: 'u1', comments: [{ id: 'c1', content: '写得好', authorId: 'u2' }] },
+];
+
+const users = [{ id: 'u1', name: '张三', email: 'zhang@example.com' }];
+
+// 类型定义
+const typeDefs = `#graphql
+  type Query {
+    article(id: ID!): Article
+    articles: [Article!]!
+  }
+  type Article {
+    id: ID!
+    title: String!
+    author: User!
+    comments: [Comment!]!
+    commentsCount: Int!
+  }
+  type User { id: ID!, name: String!, email: String! }
+  type Comment { id: ID!, content: String!, author: User! }
+`;
+
+// 解析器
+const resolvers = {
+  Query: {
+    article: (parent, { id }) => articles.find((a) => a.id === id),
+    articles: () => articles,
+  },
+  Article: {
+    // 从 article 解析出 author（自动按字段名对应）
+    author: (article) => users.find((u) => u.id === article.authorId),
+    comments: (article) => article.comments,
+    // 计算字段
+    commentsCount: (article) => article.comments.length,
+  },
+  Comment: {
+    author: (comment) => users.find((u) => u.id === comment.authorId),
+  },
+};
+
+const server = new ApolloServer({ typeDefs, resolvers });
+
+startStandaloneServer(server, { listen: { port: 4000 } }).then(({ url }) => {
+  console.log(`GraphQL 服务已启动: ${url}`);
+});
+
+// 启动：node server.js
+// 打开 http://localhost:4000 有 Apollo Sandbox 在线调试
+```
+
+**Resolver 的执行顺序：**
+
+```text
+query { article(id:"1") { title author { name } } }
+
+1. Query.article(id) → 找到文章对象
+2. 对每个请求字段递归解析：
+   article.title → article.title（直接返回）
+   article.author → Article.author resolver → user 对象
+     author.name → user.name
+3. 最终只返回客户端声明的字段结构
+```
+
+## 第五章：前端客户端实战
+
+```bash
+npm install @apollo/client graphql
+```
+
+```javascript
+// client.js —— 前端请求配置
+import { ApolloClient, InMemoryCache, gql } from '@apollo/client';
+
+export const client = new ApolloClient({
+  uri: 'http://localhost:4000/graphql',
+  cache: new InMemoryCache(),
+});
+
+// 查询文章列表（精确要字段）
+const GET_ARTICLES = gql`
+  query GetArticles {
+    articles {
+      id
+      title
+      author { name }
+      commentsCount
+    }
+  }
+`;
+
+// 用 fetch 直接调 GraphQL 也可以
+async function fetchArticles() {
+  const res = await fetch('http://localhost:4000/graphql', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      query: `
+        query {
+          articles {
+            title
+            author { name }
+            commentsCount
+          }
+        }
+      `,
+    }),
+  });
+  return res.json();
+}
+```
+
+**React 组件使用：**
+
+```javascript
+import { useQuery } from '@apollo/client';
+
+function ArticleList() {
+  const { data, loading, error } = useQuery(GET_ARTICLES);
+
+  if (loading) return <p>加载中...</p>;
+  if (error) return <p>出错: {error.message}</p>;
+
+  return (
+    <ul>
+      {data.articles.map((a) => (
+        <li key={a.id}>
+          <strong>{a.title}</strong> - {a.author.name} ({a.commentsCount}条评论)
+        </li>
+      ))}
+    </ul>
+  );
+}
+```
+
+## 第六章：常见问题——N+1 查询与安全
+
+**N+1 查询（性能大坑）：**
+
+```text
+问题：查询 100 篇文章，每篇的 author 都单独查一次数据库 → 101 次查询
+解决：DataLoader 批处理
+
+思路：
+  解析 100 个 article.author 时
+  不逐个查，而是攒成一次 WHERE id IN (...)
+```
+
+**GraphQL 常见安全风险：**
+
+```text
+1. 深度攻击：query 嵌套 10 层 → 限制查询深度 maxDepth
+2. 复杂度攻击：请求超大列表 → 限制复杂度 + 分页
+3. 别名攻击：同一个字段别名 1000 次 → 限制别名数量
+4. 权限控制：每个 resolver 都要做鉴权，别只拦顶层
+```
+
+```javascript
+// Apollo 限制查询复杂度示例
+const { createComplexityLimitRule } = require('graphql-validation-complexity');
+// 深度限制、节点数量限制等规则组合使用
+```
+
+## 避坑清单
+
+| 坑 | 正确做法 |
+|----|---------|
+| Schema 字段没用非空 `!` | 明确设计空值语义，`!` 让客户端少处理 null |
+| 忘记分页 | 列表查询必须带 page/limit，否则大数据量爆炸 |
+| N+1 查询 | 用 DataLoader 批量加载关联数据 |
+| resolver 里放业务逻辑 | resolver 只做「取数转发」，业务逻辑放 service 层 |
+| 前端拼字符串写 query | 用代码生成（graphql-codegen），类型安全 |
+| 没做鉴权就暴露 schema | 敏感字段加权限校验，按角色过滤 |
+| 用 REST 思维设计 GraphQL | 别为每个表建一堆 Query，按「业务需求」组织 |
+| 忽略错误处理 | 用自定义错误类型，区分鉴权失败/未找到/校验失败 |
+| 查询没限制深度 | 配置 maxDepth 防嵌套攻击 |
+| 前端不用缓存 | Apollo/Urql 的缓存能省大量重复请求，别裸 fetch |
+| 文件上传 | GraphQL 不原生支持，用 multipart 扩展或单独 REST 端点 |
+| 监控缺失 | 记录每个操作的执行时间，慢查询要能查出来 |
+
+## 小结
+
+```text
+Schema：类型定义即契约，自带文档
+Query：声明式查询，嵌套数据一次拿完
+Mutation：带返回值的修改操作
+Subscription：实时订阅推送
+Resolver：把字段映射到数据源
+前端：客户端声明字段，服务器精准返回
+
+优点：一次请求、精确字段、类型安全、实时订阅
+代价：缓存复杂、学习成本、需要防攻击
+```
+
+GraphQL 的本质是**「把数据获取的决定权交给客户端」**——后端定义能力（Schema），前端声明需求（Query）。这对多端应用（Web + iOS + Android）特别友好。
+
+不过要记住：GraphQL 不是银弹。**REST 依然适合简单、公开、缓存友好的 API**。选型时想清楚你的核心痛点——如果是「数据关系复杂、客户端多、想省请求」，GraphQL 值得投入；否则 REST 可能更务实。

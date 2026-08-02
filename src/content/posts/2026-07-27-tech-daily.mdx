@@ -1,0 +1,372 @@
+---
+title: "前端性能优化完全指南：从加载到渲染的全链路提速"
+description: "系统掌握前端性能优化的三大阶段：资源加载（构建体积、缓存、CDN、HTTP/2）、渲染性能（关键渲染路径、防抖节流、虚拟滚动）、运行时性能（内存泄漏、长任务）。给出可落地的优化清单和度量指标，附一份性能优化避坑清单。"
+category: tech
+tags: ["前端", "性能优化", "加载速度", "渲染", "构建优化", "Web性能"]
+date: 2026-07-27
+draft: false
+cover: "https://images.unsplash.com/photo-1543353071-873f17a7a088?w=1200&h=630&fit=crop"
+---
+
+页面 3 秒打不开，一半用户就走了。性能不是加分项，是**及格线**。
+
+前端性能优化是系统工程，从头到尾分三个阶段：
+
+```text
+加载阶段：用户拿到 HTML/CSS/JS 有多快？
+渲染阶段：页面内容出现和交互有多快？
+运行时：滚动、点击、动画卡不卡？
+
+衡量标准（Core Web Vitals）：
+LCP   Largest Contentful Paint  最大内容渲染（< 2.5s）
+INP   Interaction to Next Paint 交互响应（< 200ms）
+CLS   Cumulative Layout Shift    布局抖动（< 0.1）
+```
+
+## 第一章：加载优化——让资源更快到达
+
+### 1.1 压缩与最小化
+
+```bash
+# 压缩 JS/CSS（构建工具已自动做，确认配置开启）
+# Vite：默认开启 minify: 'esbuild'
+# 差异点：检查产物是否 gzip / brotli
+
+# 服务器开启 gzip/brotli
+# Nginx 配置
+gzip on;
+gzip_types text/css application/javascript application/json image/svg+xml;
+gzip_min_length 1024;
+# brotli（更好的压缩率，需模块支持）
+brotli on;
+```
+
+### 1.2 代码分割与按需加载
+
+```text
+问题：把所有 JS 打进一个 bundle，首屏就要下载整个应用
+解法：按路由 / 按组件分割，用到才加载
+```
+
+```javascript
+// React：React.lazy 按需加载
+import { lazy, Suspense } from 'react';
+
+const AdminPage = lazy(() => import('./AdminPage'));
+
+// Vue 3：defineAsyncComponent
+const AdminPage = defineAsyncComponent(() => import('./AdminPage.vue'));
+
+// 组件内动态 import（只在使用时才加载重库）
+function openEditor() {
+  // Monaco Editor 体积大，点击时才加载
+  const { editor } = await import('monaco-editor');
+}
+```
+
+### 1.3 缓存策略
+
+```nginx
+# 带 hash 的文件：永远长缓存
+location /assets/ {
+    add_header Cache-Control "public, max-age=31536000, immutable";
+}
+
+# HTML：不缓存（保证拿到最新版本引用）
+location / {
+    add_header Cache-Control "no-cache";
+}
+```
+
+**核心：文件名带内容 hash（`app.8f3d2c.js`），内容变了 hash 变，旧缓存自动失效。**
+
+### 1.4 图片优化（体积大头）
+
+```text
+图片通常是页面最大的资源，优化收益立竿见影：
+1. 格式：WebP / AVIF（比 PNG/JPG 小 30%~70%）
+2. 尺寸：按显示尺寸输出，不要 4000px 大图硬压
+3. 懒加载：滚动到再加载
+4. 响应式：srcset 按设备分辨率选图
+```
+
+```html
+<!-- 懒加载 -->
+<img src="placeholder.jpg"
+     data-src="real.jpg"
+     loading="lazy"
+     alt="..." />
+
+<!-- 响应式图片 -->
+<img
+  src="photo-800.jpg"
+  srcset="photo-400.jpg 400w, photo-800.jpg 800w, photo-1600.jpg 1600w"
+  sizes="(max-width: 600px) 400px, 800px"
+  alt="..." />
+
+<!-- 现代格式（AVIF/WebP 优先） -->
+<picture>
+  <source srcset="photo.avif" type="image/avif" />
+  <source srcset="photo.webp" type="image/webp" />
+  <img src="photo.jpg" alt="..." />
+</picture>
+```
+
+### 1.5 CDN 与 HTTP/2/3
+
+```text
+CDN：把静态资源分发到离用户最近的节点
+  jsDelivr / Cloudflare / 阿里云 CDN 等
+
+HTTP/2：多路复用，一个连接并行传输（必须 HTTPS 才支持）
+HTTP/3：基于 UDP，弱网下更快（需要服务器支持）
+
+验证：打开 DevTools Network，看 Protocol 列是否 h2 / h3
+```
+
+## 第二章：渲染优化——让页面更快出现
+
+### 2.1 关键渲染路径
+
+```text
+HTML 解析 → CSSOM 构建 → Render Tree → Layout → Paint
+
+优化方向：
+1. CSS 放 head（避免闪屏）
+2. JS 用 defer/async 加载（不阻塞解析）
+3. 减少首屏资源层级
+```
+
+```html
+<!-- JS 加载方式对比 -->
+<script src="app.js"></script>         <!-- ❌ 阻塞解析 -->
+<script defer src="app.js"></script>   <!-- ✅ 解析完再执行（推荐）-->
+<script async src="app.js"></script>   <!-- ✅ 下载完立刻执行 -->
+<script async src="analytics.js"></script> <!-- 独立脚本用 async -->
+```
+
+### 2.2 防抖与节流
+
+```javascript
+// 防抖：停止操作后才执行（搜索框）
+function debounce(fn, delay = 300) {
+  let timer;
+  return (...args) => {
+    clearTimeout(timer);
+    timer = setTimeout(() => fn(...args), delay);
+  };
+}
+
+const search = debounce((keyword) => {
+  fetch(`/api/search?q=${keyword}`);
+}, 300);
+
+// 节流：固定频率执行（滚动、resize）
+function throttle(fn, interval = 200) {
+  let last = 0;
+  return (...args) => {
+    const now = Date.now();
+    if (now - last >= interval) {
+      last = now;
+      fn(...args);
+    }
+  };
+}
+
+const onScroll = throttle(() => {
+  // 滚动事件处理
+}, 200);
+
+window.addEventListener('scroll', onScroll, { passive: true });
+```
+
+**防抖 vs 节流：**
+
+| 场景 | 用哪个 | 原因 |
+|------|--------|------|
+| 搜索联想 | 防抖 | 停止输入才请求 |
+| 滚动位置监听 | 节流 | 固定频率更新 |
+| 窗口 resize | 节流 | 别每次像素都触发 |
+| 表单提交 | 防抖 | 防止重复提交 |
+
+### 2.3 虚拟滚动（长列表）
+
+渲染 1 万个 DOM 节点会让页面卡死。**虚拟滚动**只渲染可视区域的节点：
+
+```text
+原理：
+  外层固定高度容器 + 内层撑起总高度
+  滚动时计算可视范围，只渲染 20~30 个可见项
+
+方案：
+  react-window / react-virtualized（React）
+  vue-virtual-scroller（Vue）
+  或自己实现（注意滚动锚点计算）
+```
+
+```javascript
+// react-window 用法示例
+import { FixedSizeList as List } from 'react-window';
+
+function TodoList({ items }) {
+  return (
+    <List height={400} itemCount={items.length} itemSize={40} width="100%">
+      {({ index, style }) => (
+        <div style={style}>{items[index].title}</div>
+      )}
+    </List>
+  );
+}
+```
+
+## 第三章：运行时优化——让交互更流畅
+
+### 3.1 避免强制同步布局（Layout Thrashing）
+
+```javascript
+// ❌ 读写交错，浏览器被迫反复重排（性能杀手）
+for (const el of items) {
+  el.style.width = `${el.offsetWidth}px`;  // 读
+  el.style.height = `${container.clientHeight}px`; // 又读又写
+}
+
+// ✅ 先批量读，再批量写
+const widths = items.map((el) => el.offsetWidth);
+items.forEach((el, i) => {
+  el.style.width = `${widths[i]}px`;
+});
+```
+
+### 3.2 requestAnimationFrame 批量更新
+
+```javascript
+// 频繁变更（进度条、动画）用 rAF 合并
+let pending = false;
+const updates = [];
+
+function scheduleUpdate(fn) {
+  updates.push(fn);
+  if (pending) return;
+  pending = true;
+  requestAnimationFrame(() => {
+    const batch = updates.splice(0);
+    batch.forEach((fn) => fn());
+    pending = false;
+  });
+}
+```
+
+### 3.3 防内存泄漏
+
+```javascript
+// ❌ 事件监听没清理（最常见泄漏）
+useEffect(() => {
+  window.addEventListener('resize', onResize);
+  // 缺少 return 清理函数！
+}, []);
+
+// ✅ 正确的清理
+useEffect(() => {
+  window.addEventListener('resize', onResize);
+  return () => window.removeEventListener('resize', onResize);
+}, []);
+
+// ❌ 定时器没清理
+const timer = setInterval(fetchData, 5000);
+// ✅ 卸载时 clearInterval(timer)
+```
+
+### 3.4 长任务拆分
+
+```text
+主线程被 200ms 的长任务卡住 → 交互卡顿
+
+拆解思路：
+1. 大循环分批处理（chunk）
+2. 复杂计算放 Web Worker（后台线程）
+3. 使用 requestIdleCallback（浏览器空闲时执行）
+```
+
+```javascript
+// 大循环分批处理，让出主线程
+function processItems(items, chunkSize = 1000) {
+  let index = 0;
+
+  function nextChunk() {
+    const end = Math.min(index + chunkSize, items.length);
+    for (; index < end; index++) {
+      processItem(items[index]);   // 重计算
+    }
+    if (index < items.length) {
+      requestAnimationFrame(nextChunk);  // 每批之间让出主线程
+    } else {
+      console.log('全部处理完成');
+    }
+  }
+  nextChunk();
+}
+```
+
+## 第四章：度量与工具
+
+```bash
+# Lighthouse（Chrome DevTools）
+# Performance 面板
+# WebPageTest（webpagetest.org）
+# Chrome DevTools 的 Performance Insights
+
+# 核心指标抓取（示例代码）
+new PerformanceObserver((list) => {
+  for (const entry of list.getEntries()) {
+    console.log('LCP:', entry.startTime);
+  }
+}).observe({ type: 'largest-contentful-paint', buffered: true });
+```
+
+**优化优先级排序（投入产出比）：**
+
+```text
+1. 图片优化（收益最大、最易做）
+2. 代码分割 + 按需加载
+3. 缓存策略 + CDN
+4. 压缩（gzip/brotli）
+5. 移除无用依赖（bundle 分析）
+6. 渲染优化（防抖节流、虚拟滚动）
+7. 长任务拆分、Web Worker
+```
+
+## 避坑清单
+
+| 坑 | 正确做法 |
+|----|---------|
+| 只优化一个环节 | 用 Lighthouse 定位瓶颈，按优先级系统性优化 |
+| 图片用 PNG/JPG 原图 | 转 WebP/AVIF，按显示尺寸输出，CDN 可选 |
+| 忽略移动端 | 优先优化移动端（弱网、小屏），LCP 尤其关注 |
+| 缓存了但 HTML 也缓存 | HTML 用 `no-cache`，只有带 hash 资源才长缓存 |
+| 忘了 `passive: true` | 滚动/触摸监听加 passive，否则滚动卡顿 |
+| 读写成交错操作 DOM | 批量读再批量写，避免强制同步布局 |
+| 组件卸载忘了清理 | useEffect 返回清理函数：事件、定时器、订阅 |
+| 整页用防抖 | 防抖会延迟响应，交互用节流，输入用防抖 |
+| 主线程做重计算 | 用 Web Worker 或分块处理，别阻塞渲染 |
+| 先优化后度量 | 先埋点度量，再针对性优化，用数据说话 |
+| 忽略构建分析 | `vite build` 后看 chunk 大小，砍掉大依赖 |
+| 首屏加载所有路由 | 按路由懒加载，首屏只加载必需代码 |
+
+## 小结
+
+```text
+加载快：
+  压缩 + 分割 + 缓存 + CDN + 现代图片格式
+渲染快：
+  CSS 放 head、JS 用 defer、防抖节流、虚拟滚动
+交互顺：
+  避免强制布局、批量 rAF、清理泄漏、长任务拆分
+度量先行：
+  Lighthouse + Core Web Vitals + Performance 面板
+
+公式：性能 = 让"关键的东西"更少 + 更早 + 更顺
+```
+
+性能优化没有银弹，但有一套完整的思路。记住优先级：**图片 > 构建体积 > 缓存 > 渲染 > 运行时**，先度量再动手，永远用数据说话。
+
+最后送你一个心法：**「不要为了优化而优化」**——找到最影响用户体验的那一个指标，把它做到极致，比均匀撒网有效得多。

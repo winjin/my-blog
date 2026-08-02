@@ -1,0 +1,345 @@
+---
+title: "Nginx 实战：反向代理、负载均衡与 HTTPS 配置全解"
+description: "由浅入深掌握 Nginx：核心概念（反向代理/正向代理/负载均衡）、静态资源服务、location 匹配规则、负载均衡策略、HTTPS 与证书配置、反向代理转发、gzip 压缩、安全加固。配可运行的完整配置示例，附一份 Nginx 配置避坑清单。"
+category: tech
+tags: ["Nginx", "反向代理", "负载均衡", "HTTPS", "服务器", "运维"]
+date: 2026-07-28
+draft: false
+cover: "https://images.unsplash.com/photo-1541462608143-67571c6738dd?w=1200&h=630&fit=crop"
+---
+
+Nginx（读作 engine-x）是全世界使用率最高的 Web 服务器之一。你访问的大多数网站背后都有一层 Nginx。
+
+它最常见的三个角色：
+
+```text
+1. 静态服务器：托管 HTML/CSS/JS、图片
+2. 反向代理：把请求转发给后端应用（Node、Java、Python）
+3. 负载均衡：把流量分发给多台后端服务器
+
+除此之外还能做：HTTPS 终结、gzip 压缩、缓存、安全防护、限流……
+```
+
+## 第一章：安装与基本命令
+
+```bash
+# macOS
+brew install nginx
+
+# Ubuntu / Debian
+sudo apt update && sudo apt install nginx
+
+# 启动 / 停止 / 重载配置 / 查看状态
+sudo systemctl start nginx
+sudo systemctl stop nginx
+sudo systemctl restart nginx
+sudo systemctl reload nginx        # 重载配置（不中断连接）
+sudo systemctl status nginx
+
+# 测试配置文件语法
+nginx -t
+
+# 配置文件位置（不同系统略有差异）
+# /etc/nginx/nginx.conf     主配置
+# /etc/nginx/sites-enabled/ 站点配置（Ubuntu）
+# /etc/nginx/conf.d/*.conf  自定义配置
+```
+
+## 第二章：核心概念——正向代理与反向代理
+
+```text
+正向代理（代理客户端）：
+  客户端 → 代理服务器 → 目标网站
+  典型：科学上网、公司内网上外网
+  服务器不知道真实客户端是谁
+
+反向代理（代理服务器）：
+  客户端 → 反向代理(Nginx) → 后端服务器
+  典型：所有网站架构
+  客户端不知道后端服务器是谁，Nginx 统一入口
+```
+
+反向代理的核心价值：
+
+```text
+安全：隐藏后端真实 IP，统一做防火墙
+负载均衡：分发给多台后端
+SSL 终结：证书集中管理，后端跑 HTTP
+缓存：静态资源在 Nginx 层缓存
+```
+
+## 第三章：静态网站服务
+
+```nginx
+# 一个最简单的静态站点
+server {
+    listen 80;
+    server_name example.com;
+
+    root /var/www/my-blog;   # 站点目录
+    index index.html;
+
+    location / {
+        try_files $uri $uri/ /index.html;  # SPA 回退
+    }
+
+    # 静态资源长缓存（文件名带 hash）
+    location /assets/ {
+        expires 1y;
+        add_header Cache-Control "public, immutable";
+    }
+
+    # gzip 压缩
+    gzip on;
+    gzip_types text/plain text/css application/javascript application/json image/svg+xml;
+    gzip_min_length 1024;
+    gzip_comp_level 6;
+}
+```
+
+## 第四章：location 匹配规则
+
+`location` 是 Nginx 的灵魂，匹配规则有优先级：
+
+```nginx
+server {
+    location = /exact          { ... }  # 1. 精确匹配（最高优先）
+    location ^~ /static/       { ... }  # 2. 前缀匹配且停止（次优先）
+    location ~ \.(js|css)$     { ... }  # 3. 正则匹配
+    location ~* \.(jpg|png)$   { ... }  # 4. 正则匹配（不区分大小写）
+    location /                  { ... }  # 5. 前缀匹配（兜底）
+}
+```
+
+**匹配优先级顺序：**
+
+```text
+=精确匹配  >  ^~前缀匹配 >  ~正则匹配（按书写顺序） >  普通前缀匹配 >  /兜底
+```
+
+```nginx
+# 常见路由规则示例
+server {
+    # API 全部转发给后端
+    location /api/ {
+        proxy_pass http://backend:8080;
+    }
+
+    # 上传文件单独处理（限制大小）
+    location /uploads/ {
+        client_max_body_size 20m;
+        root /var/www/files;
+    }
+
+    # 禁止访问隐藏文件
+    location ~ /\. {
+        deny all;
+    }
+}
+```
+
+## 第五章：反向代理与负载均衡
+
+```nginx
+# 定义一组后端服务器（负载均衡池）
+upstream backend {
+    server 10.0.0.1:8080 weight=3;   # 权重 3（承担更多流量）
+    server 10.0.0.2:8080 weight=1;
+    server 10.0.0.3:8080 down;       # 标记下线
+    server 10.0.0.4:8080 backup;     # 备用（其他挂了才上）
+    keepalive 32;                    # 连接复用
+}
+
+server {
+    listen 80;
+    server_name api.example.com;
+
+    location / {
+        proxy_pass http://backend;   # 转发给 upstream 池
+
+        # 透传请求头
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+
+        # 超时设置
+        proxy_connect_timeout 5s;
+        proxy_read_timeout 60s;
+        proxy_send_timeout 60s;
+    }
+}
+```
+
+**负载均衡策略：**
+
+| 策略 | 配置 | 说明 |
+|------|------|------|
+| 轮询 | 默认 | 按顺序轮流分发 |
+| 权重 | `weight=3` | 按权重比例分发 |
+| IP 哈希 | `ip_hash;` | 同一 IP 固定到同一台（会话保持） |
+| 最少连接 | `least_conn;` | 发给当前连接数最少的 |
+| URL 哈希 | `hash $request_uri;` | 同一 URL 固定一台（缓存友好） |
+
+```nginx
+# 会话保持：有状态应用用 ip_hash
+upstream app {
+    ip_hash;
+    server 10.0.0.1:3000;
+    server 10.0.0.2:3000;
+}
+```
+
+## 第六章：HTTPS 配置
+
+**免费证书用 Let's Encrypt（certbot 自动续期）：**
+
+```bash
+# 安装 certbot
+sudo apt install certbot python3-certbot-nginx
+
+# 自动获取证书并改写 Nginx 配置
+sudo certbot --nginx -d example.com -d www.example.com
+
+# 证书自动续期（cron 或 systemd timer 已默认配置）
+sudo certbot renew --dry-run
+```
+
+**手动配置 HTTPS：**
+
+```nginx
+# HTTP 全部跳转 HTTPS
+server {
+    listen 80;
+    server_name example.com;
+    return 301 https://$host$request_uri;
+}
+
+server {
+    listen 443 ssl;
+    http2 on;                     # 启用 HTTP/2
+    server_name example.com;
+
+    # 证书文件
+    ssl_certificate     /etc/letsencrypt/live/example.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/example.com/privkey.pem;
+
+    # 安全配置（现代推荐）
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_ciphers ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384;
+    ssl_prefer_server_ciphers off;
+
+    # HSTS：强制浏览器后续使用 HTTPS
+    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+
+    root /var/www/my-blog;
+    index index.html;
+
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+}
+```
+
+**WebSocket 支持：**
+
+```nginx
+location /ws/ {
+    proxy_pass http://backend:8080;
+    proxy_http_version 1.1;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection "upgrade";
+    proxy_read_timeout 300s;
+}
+```
+
+## 第七章：安全加固清单
+
+```nginx
+# 隐藏版本号
+server_tokens off;
+
+# 安全响应头
+add_header X-Frame-Options "SAMEORIGIN" always;
+add_header X-Content-Type-Options "nosniff" always;
+add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+add_header Content-Security-Policy "default-src 'self'" always;
+
+# 限制上传大小，防 DoS
+client_max_body_size 10m;
+
+# 限流（每 IP 每秒 10 个请求）
+limit_req_zone $binary_remote_addr zone=api_limit:10m rate=10r/s;
+location /api/ {
+    limit_req zone=api_limit burst=20 nodelay;
+    proxy_pass http://backend:8080;
+}
+
+# 禁止访问隐藏文件
+location ~ /\. {
+    deny all;
+    access_log off;
+    log_not_found off;
+}
+
+# 只允许特定方法
+if ($request_method !~ ^(GET|POST|PUT|DELETE|OPTIONS)$) {
+    return 405;
+}
+```
+
+## 第八章：常用排障命令
+
+```bash
+# 测试配置语法
+nginx -t
+
+# 检查监听端口
+sudo lsof -i :80 -i :443
+
+# 查看访问日志
+tail -f /var/log/nginx/access.log
+
+# 查看错误日志（排障主力）
+tail -f /var/log/nginx/error.log
+
+# 查看当前连接
+ss -tnlp | grep nginx
+
+# 重新加载（改完配置必须执行）
+nginx -s reload
+```
+
+## 避坑清单
+
+| 坑 | 正确做法 |
+|----|---------|
+| 改了配置不生效 | 改完必须 `nginx -t` 然后 `nginx -s reload` |
+| `proxy_pass http://backend:8080;` 末尾加不加 `/` | 末尾带 `/` 会**丢弃**匹配的前缀路径，注意区分 |
+| 端口被占（80/443 冲突） | `sudo lsof -i :80` 找出占用进程 |
+| SPA 刷新 404 | `try_files $uri $uri/ /index.html;` 回退到入口 |
+| HTTPS 页面请求 http 资源 | 页面内所有资源走 https，或配置 CSP `upgrade-insecure-requests` |
+| 大文件上传报 413 | 调大 `client_max_body_size` |
+| WebSocket 连接被断 | 配 `Upgrade`/`Connection` 头 + 调大 `proxy_read_timeout` |
+| 缓存了不该缓存的页面 | 只对静态资源长缓存，HTML 用 `no-cache` |
+| 配置了负载均衡但会话丢失 | 有状态应用用 `ip_hash` 或改造为无状态（JWT） |
+| 忘记续期证书 | 用 certbot `--nginx` 自动续期，验证 `/etc/cron.d/certbot` |
+| 权限不足访问被拒 | `nginx -t` 报 permission denied 时检查日志目录属主 |
+| 正则 location 误伤 | 正则匹配优先级高，注意顺序和 `^~` 的使用 |
+
+## 小结
+
+```text
+静态服务：root + location + expires + gzip
+反向代理：proxy_pass + 请求头透传
+负载均衡：upstream + weight / ip_hash / least_conn
+HTTPS：certbot 一键 + 安全头 + HSTS
+WebSocket：Upgrade 头 + 调大超时
+安全：限流 + 隐藏版本 + 安全响应头
+
+心法：改完配置 → nginx -t → nginx -s reload
+```
+
+Nginx 是运维和前端都要掌握的「基础设施级」技能。从静态托管到反向代理，再到负载均衡和 HTTPS，你已经掌握了它 90% 的日常用法。
+
+接下来可以深入：Nginx 缓存（`proxy_cache`）、限流与防攻击、`map` 模块做 A/B 测试，或者用 Nginx 作为网关做微服务路由。核心是——**Nginx 是一台「擅长转发和分发流量」的高性能机器**，理解转发规则，就理解了一切。

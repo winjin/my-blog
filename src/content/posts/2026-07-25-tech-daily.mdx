@@ -1,0 +1,421 @@
+---
+title: "Docker Compose 实战：一条命令启动完整的应用栈"
+description: "从零掌握 Docker Compose：compose.yaml 语法（services/volumes/networks/environment）、build 与镜像复用、多服务依赖（depends_on）、健康检查、环境变量与 .env 文件。用一个真实项目（前端 + 后端 + PostgreSQL + Redis + Nginx）演示如何编排完整应用栈。"
+category: tech
+tags: ["Docker", "Compose", "容器编排", "DevOps", "前后端", "实战"]
+date: 2026-07-25
+draft: false
+cover: "https://images.unsplash.com/photo-1543269865-cbf427effbad?w=1200&h=630&fit=crop"
+---
+
+上一个入门篇讲了 Docker 的基础——镜像、容器、Dockerfile。但真实项目不会只有一个容器：一个 Web 应用通常有**前端、后端、数据库、缓存、反向代理**五六个服务。手打 `docker run` 一个个启动？太原始了。
+
+**Docker Compose** 就是解决这个问题的：用一个 `compose.yaml` 文件声明所有服务，一条 `docker compose up` 全部启动。
+
+## 第一章：为什么需要 Compose
+
+```text
+没有 Compose：
+docker run -d --name db postgres
+docker run -d --name redis redis
+docker run -d --name backend --link db --link redis my-backend
+docker run -d --name frontend --link backend my-frontend
+docker run -d --name nginx -p 80:80 --link frontend --link backend my-nginx
+# 每次重启都要记一堆参数，删一个容器还要自己清理网络……
+
+有 Compose：
+docker compose up -d
+# 所有服务按声明启动、网络自动打通、停止清理一条命令
+docker compose down
+```
+
+Compose 的价值不只是少打字，而是**可复现**：团队任何一个人 `docker compose up -d`，都能得到一模一样的环境。
+
+## 第二章：Compose 文件基础
+
+新版文件名推荐 `compose.yaml`（旧版 `docker-compose.yml` 仍兼容）。
+
+```yaml
+# compose.yaml
+version: "3.9"        # 新版可省略，保持兼容就写上
+
+services:             # 所有服务
+  web:                # 服务名（同时作为 DNS 主机名）
+    build: ./frontend # 从 Dockerfile 构建
+    ports:
+      - "3000:80"     # 宿主机3000 → 容器80
+    depends_on:
+      - api
+
+  api:                # 后端服务
+    build: ./backend
+    ports:
+      - "8080:8080"
+    environment:      # 注入环境变量
+      DATABASE_URL: postgres://user:pass@db:5432/app
+      REDIS_URL: redis://cache:6379
+    depends_on:
+      db:
+        condition: service_healthy
+      cache:
+
+  db:                 # PostgreSQL
+    image: postgres:16
+    environment:
+      POSTGRES_USER: user
+      POSTGRES_PASSWORD: pass
+      POSTGRES_DB: app
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "user"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  cache:              # Redis
+    image: redis:7
+    volumes:
+      - redisdata:/data
+
+volumes:              # 命名卷（数据持久化）
+  pgdata:
+  redisdata:
+```
+
+**核心概念：**
+
+| 配置项 | 作用 |
+|--------|------|
+| `services` | 声明所有容器，每个服务一个名字 |
+| `image` | 用现成镜像（Redis、Postgres 等） |
+| `build` | 用本地 Dockerfile 构建镜像 |
+| `ports` | 端口映射 `宿主机:容器` |
+| `environment` | 环境变量（服务内可用） |
+| `volumes` | 数据持久化（卷或目录挂载） |
+| `depends_on` | 启动顺序控制 |
+| `healthcheck` | 健康检查，让依赖真正就绪 |
+
+## 第三章：环境变量与 .env
+
+环境变量不要硬编码在文件里：
+
+```bash
+# .env 文件（被 compose 自动读取，注意放进 .gitignore）
+POSTGRES_USER=appuser
+POSTGRES_PASSWORD=s3cr3t!
+POSTGRES_DB=myapp
+BACKEND_PORT=8080
+```
+
+```yaml
+# compose.yaml 中使用
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}          # 来自 .env
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+
+  api:
+    build: ./backend
+    ports:
+      - "${BACKEND_PORT}:8080"
+    # 直接把整个 .env 传进容器（用 !override 后缀避免变量被覆盖问题）
+    env_file:
+      - .env
+```
+
+> ⚠️ 区分三层变量：`.env`（compose 文件使用）、`environment`（写死进容器）、`env_file`（整文件灌进容器）。调试优先级时别搞混。
+
+## 第四章：依赖与健康检查
+
+`depends_on` 默认只保证**启动顺序**，不保证**服务就绪**。数据库容器起来了，但 PostgreSQL 可能还没接受连接。
+
+**用 condition 等待就绪：**
+
+```yaml
+services:
+  api:
+    depends_on:
+      db:
+        condition: service_healthy   # 等 db 健康检查通过才启动
+```
+
+```yaml
+services:
+  db:
+    image: postgres:16
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U appuser -d myapp"]
+      interval: 5s     # 每 5 秒检查
+      timeout: 3s      # 超时 3 秒
+      retries: 5       # 连续失败 5 次标记不健康
+      start_period: 10s # 给启动留 10 秒宽限
+```
+
+**常见健康检查：**
+
+```yaml
+# Redis
+healthcheck:
+  test: ["CMD", "redis-cli", "ping"]
+  interval: 5s
+  retries: 5
+
+# Node 后端
+healthcheck:
+  test: ["CMD", "node", "-e", "fetch('http://localhost:8080/health').then(r=>process.exit(r.ok?0:1))"]
+  interval: 10s
+  timeout: 5s
+  retries: 3
+```
+
+## 第五章：网络——服务怎么互相通信
+
+Compose 会自动创建一个默认网络，**所有服务通过服务名互相访问**：
+
+```text
+api 里连接数据库：  db:5432   （不是 localhost!）
+nginx 里转发后端：  api:8080
+前端请求后端：     api:8080
+```
+
+```yaml
+services:
+  web:
+    networks:
+      - frontend
+  api:
+    networks:
+      - frontend
+      - backend
+  db:
+    networks:
+      - backend
+
+networks:
+  frontend:
+  backend:
+```
+
+**为什么 service 名能当域名用？** Compose 创建了一个 bridge 网络，内置 DNS 解析。这也是「服务名"db"而非"localhost"」的原因——容器隔离，`localhost` 指向容器自己。
+
+## 第六章：volumes——数据持久化
+
+容器是**无状态的**，一删除数据就没了。卷（volume）用来持久化：
+
+```yaml
+services:
+  db:
+    image: postgres:16
+    volumes:
+      - pgdata:/var/lib/postgresql/data    # 命名卷，由 Docker 管理
+
+  api:
+    volumes:
+      - ./backend:/app                      # 绑定挂载（开发热重载用）
+      - /app/node_modules                    # 匿名卷，覆盖容器内依赖
+
+volumes:
+  pgdata:
+```
+
+**三种挂载方式：**
+
+| 类型 | 语法 | 用途 |
+|------|------|------|
+| 命名卷 | `pgdata:/path` | 数据持久化（推荐，Docker 管理） |
+| 绑定挂载 | `./dir:/path` | 开发时同步代码 |
+| 匿名卷 | `/path` | 覆盖依赖目录等 |
+
+## 第七章：完整实战——一个全栈应用
+
+```text
+项目结构：
+my-app/
+├── compose.yaml
+├── .env
+├── backend/
+│   ├── Dockerfile
+│   └── src/
+├── frontend/
+│   ├── Dockerfile
+│   └── dist/
+└── nginx/
+    └── nginx.conf
+```
+
+```yaml
+# compose.yaml
+services:
+  frontend:
+    build: ./frontend
+    ports:
+      - "3000:80"          # 开发期直接暴露
+    depends_on:
+      - backend
+
+  backend:
+    build: ./backend
+    environment:
+      DATABASE_URL: postgres://appuser:secret@db:5432/myapp
+      REDIS_URL: redis://cache:6379
+      JWT_SECRET: ${JWT_SECRET}
+    depends_on:
+      db:
+        condition: service_healthy
+      cache:
+        condition: service_healthy
+    ports:
+      - "8080:8080"
+
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: appuser
+      POSTGRES_PASSWORD: secret
+      POSTGRES_DB: myapp
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U appuser -d myapp"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  cache:
+    image: redis:7
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  nginx:
+    image: nginx:alpine
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      - frontend
+      - backend
+
+volumes:
+  pgdata:
+  redisdata:
+```
+
+```nginx
+# nginx/nginx.conf —— 生产反向代理
+server {
+    listen 80;
+    server_name example.com;
+
+    location /api/ {
+        proxy_pass http://backend:8080/;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+    }
+
+    location / {
+        proxy_pass http://frontend:80/;
+    }
+}
+```
+
+```bash
+# 启动整个应用栈
+docker compose up -d
+
+# 查看状态
+docker compose ps
+
+# 查看日志（-f 跟随）
+docker compose logs -f backend
+
+# 进入容器调试
+docker compose exec backend sh
+
+# 在容器内执行命令
+docker compose exec db psql -U appuser -d myapp
+
+# 停止并删除容器+网络（保留卷）
+docker compose down
+
+# 连卷一起删（⚠️数据没了）
+docker compose down -v
+
+# 重新构建镜像后启动
+docker compose up -d --build
+
+# 查看配置实际解析结果（调试环境变量）
+docker compose config
+```
+
+## 第八章：常用技巧
+
+**多环境配置：**
+
+```yaml
+# compose.override.yaml 会被自动加载（开发专属配置）
+# 生产用 --profile 或指定文件
+docker compose -f compose.yaml -f compose.prod.yaml up -d
+```
+
+**水平扩展某个服务：**
+
+```bash
+# 启动 3 个 backend 实例（负载均衡）
+docker compose up -d --scale backend=3
+```
+
+**一次性任务：**
+
+```yaml
+services:
+  migrate:
+    build: ./backend
+    command: ["npm", "run", "migrate"]
+    depends_on:
+      db:
+        condition: service_healthy
+    profiles: ["tools"]   # 默认不启动
+
+# 只运行迁移任务
+docker compose --profile tools run --rm migrate
+```
+
+## 避坑清单
+
+| 坑 | 正确做法 |
+|----|---------|
+| 容器里用 `localhost` 连数据库 | 容器隔离，用**服务名** `db:5432` |
+| `depends_on` 只保证启动顺序 | 加 `condition: service_healthy` 等真正就绪 |
+| 端口冲突（EADDRINUSE） | `docker compose ps` 检查，改 ports 或停掉占用进程 |
+| 修改代码不生效 | 开发用绑定挂载 `./backend:/app`；生产改完要 `--build` |
+| `down` 后数据丢了 | 用命名卷存数据，`down` 不删卷，`down -v` 才删 |
+| .env 写死密钥提交仓库 | 密钥放 `.env` 并 `.gitignore`，容器内用 `env_file` 注入 |
+| 镜像越攒越大 | 用多阶段构建 + `.dockerignore` 排除 node_modules、dist |
+| 服务名重复/大小写混乱 | 服务名用小写，避免与镜像名混淆 |
+| 忘记重建镜像 | 改 Dockerfile 后必须 `docker compose up -d --build` |
+| 不知道 `docker compose config` | 变量解析异常时先看它输出，别瞎猜 |
+
+## 小结
+
+```text
+一条命令启动全栈：docker compose up -d
+一条命令清场：    docker compose down
+服务互访：        服务名（db:5432 而非 localhost:5432）
+数据持久化：      命名卷（down 不删，-v 才删）
+等待就绪：        depends_on + condition: service_healthy
+环境管理：        .env 文件 + ${VAR} 引用
+```
+
+Docker Compose 是「本地开发」和「小规模部署」的黄金工具。掌握了它，你就能用一份文件把前端、后端、数据库、缓存、Nginx 完整地组织起来。
+
+下一步可以挑战：把 compose 里的服务拆到多台机器（Swarm），或用 Kubernetes 做生产级编排——不过对绝大多数项目来说，Compose 已经足够优雅了。

@@ -1,0 +1,365 @@
+---
+title: "可观测性入门：监控、日志与告警的黄金三角"
+description: "掌握可观测性（Observability）三大支柱：指标（Metrics）、日志（Logs）、链路追踪（Traces）。从零搭建一套开源监控体系：Prometheus 采集指标、Grafana 可视化、Loki 日志、告警规则配置。以一个真实 Web 服务为例，演示从埋点到告警的全流程，附一份可观测性避坑清单。"
+category: tech
+tags: ["可观测性", "监控", "Prometheus", "Grafana", "日志", "告警"]
+date: 2026-08-01
+draft: false
+cover: "https://images.unsplash.com/photo-1517248135467-4c7edcad34c4?w=1200&h=630&fit=crop"
+---
+
+系统出故障了，你打开终端手忙脚乱地查日志、翻监控、抓包。但如果平时就把**监控、日志、告警**都建设好，故障发生前 5 分钟，你的手机就已经响了。
+
+这就是**可观测性（Observability）**——不是「出事了再查」，而是「出事先知道、知道就能定位」。
+
+```text
+可观测性三大支柱：
+Metrics 指标：系统现在状态如何？（如 CPU、请求量、错误率）
+Logs    日志：发生了什么？（如 请求详情、错误堆栈）
+Traces  链路：一次请求经历了什么？（跨服务调用链）
+
+三者的关系：
+指标告诉你"坏了"
+日志告诉你"哪里坏了"
+链路告诉你"为什么会坏"
+```
+
+## 第一章：三支柱详解
+
+### 1.1 指标（Metrics）——现在是健康吗
+
+```text
+指标是数值化的状态快照，适合长期存储、趋势分析和告警
+
+核心指标类型：
+Counter  计数器：只增不减（请求总数、错误总数）
+Gauge    仪表：可增可减（当前连接数、内存使用）
+Histogram 直方图：分布统计（请求延迟分布、大小分布）
+
+经典四指标（RED / USE）：
+Rate    每秒请求量
+Errors  错误率
+Duration 响应延迟（P50/P95/P99）
+Use:     资源使用率（CPU、内存、磁盘）
+```
+
+### 1.2 日志（Logs）——发生了什么
+
+```text
+日志是事件记录，偏重"细节"，用于事后排查和根因分析
+
+结构化日志（JSON）是最佳实践：
+{"time":"2026-08-01T10:00:00Z","level":"error",
+ "service":"order-service","request_id":"abc123",
+ "message":"数据库连接超时","db":"orders","latency_ms":3020}
+
+规范：
+1. 统一格式（JSON），统一字段（time/level/service/request_id）
+2. 关联 ID：请求唯一 request_id 贯穿全链路
+3. 分级输出：debug/info/warn/error 分级控制
+4. 别打敏感信息：密码、token 严禁进日志
+```
+
+### 1.3 链路追踪（Traces）——为什么会坏
+
+```text
+一次用户请求会横跨多个服务：
+浏览器 → 网关 → 订单服务 → 库存服务 → 支付服务 → 数据库
+
+Trace 记录这整条链路的调用关系和时间
+Span 是链路中的每一跳
+
+有了 Trace：
+  一眼看出哪一跳最慢
+  看到错误发生在哪个服务
+  定位到底层依赖问题
+
+协议标准：OpenTelemetry（OTel，行业标准）
+```
+
+## 第二章：搭建 Prometheus + Grafana
+
+**Prometheus** 是开源监控系统（指标采集 + 存储 + 告警），**Grafana** 是可视化面板。
+
+```yaml
+# docker-compose.yaml
+services:
+  prometheus:
+    image: prom/prometheus:latest
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+
+  grafana:
+    image: grafana/grafana:latest
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin123
+
+  # 模拟被测服务（导出一个示例指标）
+  node-exporter:
+    image: prom/node-exporter:latest
+    ports:
+      - "9100:9100"
+```
+
+```yaml
+# prometheus.yml
+global:
+  scrape_interval: 15s    # 每 15 秒拉一次指标
+
+scrape_configs:
+  - job_name: "node"
+    static_configs:
+      - targets: ["node-exporter:9100"]
+```
+
+```bash
+docker compose up -d
+
+# Prometheus: http://localhost:9090
+#   → Status/Targets 看采集状态
+#   → 输入 node_cpu_seconds_total 查询指标
+
+# Grafana: http://localhost:3000（admin/admin123）
+#   → Add data source → Prometheus → http://prometheus:9090
+#   → Dashboards → Import 一个模板
+```
+
+**给应用埋点（以 Node.js 为例）：**
+
+```javascript
+// npm install prom-client
+const prometheus = require('prom-client');
+const express = require('express');
+
+const app = express();
+
+// 创建 Counter：统计请求总数
+const httpRequests = new prometheus.Counter({
+  name: 'http_requests_total',
+  help: 'HTTP 请求总数',
+  labelNames: ['method', 'route', 'status'],
+});
+
+// 创建 Histogram：统计延迟分布
+const httpDuration = new prometheus.Histogram({
+  name: 'http_request_duration_seconds',
+  help: 'HTTP 请求延迟',
+  labelNames: ['method', 'route'],
+  buckets: [0.01, 0.05, 0.1, 0.5, 1, 2.5, 5, 10],
+});
+
+app.use((req, res, next) => {
+  const start = Date.now();
+  res.on('finish', () => {
+    httpRequests.inc({
+      method: req.method,
+      route: req.route?.path || req.path,
+      status: res.statusCode,
+    });
+    httpDuration.observe(
+      { method: req.method, route: req.route?.path || req.path },
+      (Date.now() - start) / 1000
+    );
+  });
+  next();
+});
+
+// 暴露 /metrics 端点（Prometheus 来拉取）
+app.get('/metrics', async (req, res) => {
+  res.set('Content-Type', prometheus.register.contentType);
+  res.end(await prometheus.register.metrics());
+});
+
+app.listen(3000);
+```
+
+## 第三章：日志采集与 Loki
+
+**Loki** 是 Grafana 家的日志系统，配合 Prometheus 使用：
+
+```yaml
+# docker-compose.yaml 追加
+  loki:
+    image: grafana/loki:latest
+    ports:
+      - "3100:3100"
+
+  # 采集器：把日志推给 Loki
+  promtail:
+    image: grafana/promtail:latest
+    volumes:
+      - /var/log:/var/log:ro
+      - ./promtail.yml:/etc/promtail/config.yml
+    command: -config.file=/etc/promtail/config.yml
+```
+
+```yaml
+# promtail.yml
+server:
+  http_listen_port: 9080
+
+clients:
+  - url: http://loki:3100/loki/api/v1/push
+
+scrape_configs:
+  - job_name: "app-logs"
+    static_configs:
+      - targets: [localhost]
+        labels:
+          job: myapp
+          __path__: /var/log/myapp/*.log
+```
+
+```bash
+# Grafana 里添加 Loki 数据源，然后可以用 LogQL 查询：
+{job="myapp"} | json | level="error"
+{job="myapp"} |= "timeout"
+```
+
+**LogQL 常用查询：**
+
+```text
+{app="order-service"}                                    # 按标签过滤
+{app="order-service"} |= "ERROR"                        # 包含关键字
+{app="order-service"} | json | status_code=500          # 解析 JSON 后过滤
+rate({app="order-service"} |= "ERROR"[5m])              # 错误率
+```
+
+## 第四章：告警配置——出事先知道
+
+**Prometheus 告警三步：规则 → Alertmanager → 通知渠道（钉钉/邮件/Slack）**
+
+```yaml
+# prometheus.yml 追加
+rule_files:
+  - alert_rules.yml
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: ["alertmanager:9093"]
+```
+
+```yaml
+# alert_rules.yml
+groups:
+  - name: service_alerts
+    rules:
+      - alert: InstanceDown
+        expr: up == 0
+        for: 1m              # 持续 1 分钟才告警（防抖动）
+        labels:
+          severity: critical
+        annotations:
+          summary: "实例 {{ $labels.instance }} 挂了"
+          description: "已持续 1 分钟无响应"
+
+      - alert: HighErrorRate
+        expr: |
+          sum(rate(http_requests_total{status=~"5.."}[5m]))
+            / sum(rate(http_requests_total[5m])) > 0.05
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "5xx 错误率超过 5%"
+
+      - alert: HighCPU
+        expr: 100 - avg(rate(node_cpu_seconds_total{mode="idle"}[5m]))*100 > 80
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "CPU 使用率超过 80%"
+```
+
+**Alertmanager 通知钉钉：**
+
+```yaml
+# alertmanager.yml
+route:
+  group_by: ['alertname']
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 4h
+
+receivers:
+  - name: 'dingtalk'
+    webhook_configs:
+      - url: 'https://oapi.dingtalk.com/robot/send?access_token=xxx'
+        send_resolved: true
+```
+
+**告警设计原则：**
+
+```text
+1. 只告警"需要人处理"的事，否则告警疲劳
+2. 每条告警能指导行动：有 summary + 链接到看板
+3. 设置合理阈值，避免抖动（for: 持续 N 分钟）
+4. 分级：critical（立即处理）/ warning（尽快）/ info（记录）
+5. 告警必带标签：severity、service、env
+```
+
+## 第五章：链路追踪（OpenTelemetry）
+
+```bash
+# 全链路：应用（OTel SDK）→ 采集器 → 后端（Jaeger 等）
+docker run -d --name jaeger -p 16686:16686 -p 4318:4318 \
+  jaegertracing/jaeger:latest
+```
+
+```javascript
+// npm install @opentelemetry/sdk-node @opentelemetry/auto-instrumentations-node
+const { NodeSDK } = require('@opentelemetry/sdk-node');
+const { getNodeAutoInstrumentations } = require('@opentelemetry/auto-instrumentations-node');
+const { OTLPTraceExporter } = require('@opentelemetry/exporter-trace-otlp-http');
+
+const sdk = new NodeSDK({
+  traceExporter: new OTLPTraceExporter({ url: 'http://localhost:4318/v1/traces' }),
+  instrumentations: [getNodeAutoInstrumentations()],
+});
+
+sdk.start();
+```
+
+**无需改业务代码**——自动插桩即可捕获 HTTP 请求、数据库调用、外部依赖的 span，在 Jaeger UI（http://localhost:16686）看到完整调用链。
+
+## 避坑清单
+
+| 坑 | 正确做法 |
+|----|---------|
+| 只监控服务器，不监控业务 | 指标要看请求量/错误率/延迟（RED），而非只看 CPU |
+| 日志格式混乱 | 统一结构化 JSON，统一 time/level/service/request_id |
+| 全链路都打 error 日志 | error 只留给"需人工处理"的问题，正常业务用 info |
+| 告警阈值太敏感 | 加 `for: 5m` 持续判定，防瞬时抖动误报 |
+| 告警没人接 | 配 Alertmanager 通知渠道 + 值班分组，避免"告警了没人看" |
+| Prometheus 存所有历史 | 设 retention（如 15d），长期归档用长期存储（VictoriaMetrics/Thanos） |
+| 日志里打敏感信息 | 密码、token、身份证号严禁进日志，脱敏后再打 |
+| 忘了采集自己的 /metrics | 埋点后确认 Prometheus target 是 up 状态 |
+| 用 `tail` 代替日志平台 | 统一进 Loki/ELK，支持检索聚合，别靠肉眼看文件 |
+| 生产没开链路追踪 | 用 OTel 自动插桩，跨服务排查效率提升数倍 |
+| 告警没做去重分组 | 配置 group_by/group_wait，防止风暴式轰炸 |
+| 所有环境一套阈值 | 开发/生产分开告警配置，阈值按环境调整 |
+
+## 小结
+
+```text
+指标（Metrics）→ Prometheus：采集、存储、查询
+日志（Logs）  → Loki + Promtail：结构化采集、LogQL 查询
+链路（Traces）→ OpenTelemetry + Jaeger：全链路追踪
+可视化        → Grafana：指标看板 + 日志联动
+告警          → Alertmanager：规则 + 通知渠道
+
+口诀：
+先埋点，再上板，最后配告警
+RED 三指标：Rate / Errors / Duration
+告警四要素：准、狠、稳、有人看
+```
+
+可观测性不是一套工具，而是一种**工程习惯**：新服务上线前先问自己三个问题——「它的指标谁在看？日志在哪查？出问题谁会收到告警？」
+
+把这套体系搭好，你就从「救火队员」升级成「带雷达的飞行员」——故障发生前，你已经知道了。下一步可以探索：OpenTelemetry 统一协议、VictoriaMetrics 大规模存储、以及 SLO 服务目标驱动的告警设计。
