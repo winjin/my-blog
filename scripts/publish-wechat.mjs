@@ -158,12 +158,25 @@ function mdToWechatHtml(md, imgMap = {}) {
   // Remove the trailing AI disclaimer
   html = html.replace(/---\s*\n\s*>.*AI.*生成.*$/s, '');
 
-  // Code blocks — extract first to protect content from other transformations
+  // Code blocks — extract first to protect content from other transformations.
+  // WeChat's editor strips <pre>/<code> and collapses newlines inside them, so
+  // we render code as one <p> per line inside a styled <section>: line breaks
+  // and leading spaces survive even after the editor round-trips the content.
   const codeBlocks = [];
   html = html.replace(/```[\w]*\n([\s\S]*?)```/g, (_, code) => {
-    const escaped = code.replace(/</g, '&lt;').replace(/>/g, '&gt;').trim();
+    const escaped = code
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/\r\n/g, '\n')
+      .trim();
+    const lines = escaped.split('\n').map(line =>
+      line
+        ? `<p style="margin:0;padding:0;font-family:Menlo,Consolas,monospace;font-size:13px;line-height:1.7;white-space:pre-wrap;word-break:break-all;color:#24292e;">${line}</p>`
+        : '<p style="margin:0;padding:0;height:0.8em;">&nbsp;</p>'
+    );
     const placeholder = `__CODE_BLOCK_${codeBlocks.length}__`;
-    codeBlocks.push(`<pre style="background:#f6f8fa;border-radius:6px;padding:16px;overflow-x:auto;font-size:13px;line-height:1.6;margin:16px 0;"><code>${escaped}</code></pre>`);
+    codeBlocks.push(`<section style="background:#f6f8fa;border-radius:6px;padding:14px 16px;margin:16px 0;overflow-x:auto;">${lines.join('')}</section>`);
     return placeholder;
   });
 
@@ -177,11 +190,13 @@ function mdToWechatHtml(md, imgMap = {}) {
     return placeholder;
   });
 
-  // Inline code — extract to protect from other transformations
+  // Inline code — extract to protect from other transformations. Use <span>
+  // (not <code>, which WeChat's editor may drop).
   const inlineCodes = [];
   html = html.replace(/`([^`]+)`/g, (_, code) => {
+    const escaped = code.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
     const placeholder = `__INLINE_CODE_${inlineCodes.length}__`;
-    inlineCodes.push(`<code style="background:#f0f0f0;padding:2px 6px;border-radius:3px;font-size:13px;color:#d14;">${code}</code>`);
+    inlineCodes.push(`<span style="background:#f0f0f0;padding:2px 6px;border-radius:3px;font-size:13px;color:#d14;font-family:Menlo,Consolas,monospace;">${escaped}</span>`);
     return placeholder;
   });
 
@@ -225,15 +240,18 @@ function mdToWechatHtml(md, imgMap = {}) {
   // Clean up empty paragraphs
   html = html.replace(/<p[^>]*>\s*<\/p>/g, '');
 
-  // Restore code blocks, images, and inline code
+  // Restore code blocks, images, and inline code. The paragraph pass may have
+  // wrapped a standalone placeholder line in <p>…</p>; strip that wrapper so we
+  // don't nest <p> inside <p> (invalid HTML WeChat renders badly). Inline-code
+  // placeholders usually sit mid-paragraph, so the plain fallback keeps them.
   codeBlocks.forEach((block, i) => {
-    html = html.replace(`__CODE_BLOCK_${i}__`, block);
+    html = html.replace(new RegExp(`<p[^>]*>__CODE_BLOCK_${i}__</p>|__CODE_BLOCK_${i}__`), block);
   });
   images.forEach((img, i) => {
-    html = html.replace(`__IMG_${i}__`, img);
+    html = html.replace(new RegExp(`<p[^>]*>__IMG_${i}__</p>|__IMG_${i}__`), img);
   });
   inlineCodes.forEach((code, i) => {
-    html = html.replace(`__INLINE_CODE_${i}__`, code);
+    html = html.replace(new RegExp(`<p[^>]*>__INLINE_CODE_${i}__</p>|__INLINE_CODE_${i}__`), code);
   });
 
   // Wrap in container

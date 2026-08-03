@@ -1,0 +1,480 @@
+---
+title: "LLM Space 4：Agent 开发者的可视化工作台，从理论到实战"
+description: "字节跳动 DeerFlow 的姊妹项目 LLM Space 4 是一个桌面端 Agent 开发工作台：构建、追踪、调试、评估、生成一体化。从「Agent 为什么难开发」讲起，拆解 Thread/Model/Tools/Variables/Rubric 等核心概念，手把手跑通第一个 Agent 与 ReAct 循环，最后深入源码架构（Bun monorepo + Electrobun + Pi Agent Core）与 Thread 一键生成 LangGraph Python 的魔法，附一份 Agent 调试避坑清单。"
+category: tech
+tags: ["LLM Space", "Agent", "大模型", "AI 开发工具", "LangGraph", "DeerFlow", "提示词工程"]
+date: 2026-08-03
+draft: false
+cover: "https://images.unsplash.com/photo-1677442136019-21780ecad995?w=1200&h=630&fit=crop"
+---
+
+写 Prompt 一时爽，debug Agent 火葬场。
+
+如果你做过哪怕一次正经的 Agent 开发，大概率经历过这样的循环：模型调用了错误的工具、传错了参数、被一句无关的上下文带偏、同样的 Prompt 换个模型行为就完全变了……而你手里只有一张终端聊天窗口，看不到模型脑子里在想什么。
+
+今天的文章，我们来认识一个专门解决这个问题的开源项目：**LLM Space 4**——字节跳动 [DeerFlow](https://github.com/bytedance/deer-flow) 的姊妹项目，一个面向 Agent 开发者的桌面端工作台。
+
+按老规矩，由浅入深：先讲清楚 Agent 开发为什么这么难（理论），再带你跑通完整流程（实践），最后扒一扒它的源码架构（深入），附一份避坑清单。
+
+## 第一章：Agent 开发为什么这么难？
+
+### 什么是 Agent
+
+先说共识。**LLM Agent（智能体）** 大致是：一个以 LLM 为「大脑」、能够自主决策并调用工具完成任务的系统。
+
+它的核心运行逻辑叫 **Agent Loop（智能体循环）**，最经典的是 ReAct 模式：
+
+```text
+思考（Reason）→ 行动（Act）→ 观察（Observe）→ 再思考 → …
+
+具体流程：
+1. 把 system prompt + 对话历史 + 工具定义发给模型
+2. 模型决定：直接回答，还是调用某个工具（给出参数）
+3. 若是调用工具，把结果塞回上下文，回到第 1 步
+4. 直到模型认为任务完成
+```
+
+这个「循环 + 工具 + 上下文」的整套执行外壳，圈内叫 **harness**。它决定了模型能看到什么、能做什么、怎么被约束。
+
+### 痛点：Agent 是黑盒里的黑盒
+
+比起传统的「Prompt 问答」，Agent 开发难在三件事：
+
+```text
+1. 不可观察 —— 模型为什么选这个工具？传了什么参数？
+   中间过程是一堆看不见的内部调用，只有最终结果可见。
+
+2. 不可复现 —— 同样的输入，换一个模型、改一次参数，
+   行为就可能完全不一样。问题到底出在 Prompt、工具还是模型？
+
+3. 不可评估 —— 到底哪个版本更好？凭感觉？
+   「看起来好一点」和「真的好」之间，缺一把客观的尺子。
+```
+
+所以要高效开发 Agent，你需要的不只是「能跑对话的界面」，而是一个能**拆解、回放、对比、评分**的运行现场。LLM Space 就是干这个的。
+
+## 第二章：LLM Space 是什么
+
+一句话：**一个把「构建 → 追踪 → 调试 → 评估 → 管理 → 生成」全流程装进桌面的 Agent 开发工作台。**
+
+它的一些背景：
+
+- 项目始于 **2023 年 3 月**，v4 是第四次大版本迭代（README 上写着 LLM Space 4）。
+- 它是 [DeerFlow](https://github.com/bytedance/deer-flow) 的姊妹项目，DeerFlow 团队**自己重度使用它**：DeerFlow 的每个版本都用 LLM Space 来构建和调试（狗粮文化，dogfooding）。
+- 免费开源，MIT 协议，TypeScript 编写。
+- 官方站点：https://deer-flow.github.io/llm-space/
+
+### 六大功能
+
+| 能力 | 干什么 | 通俗解释 |
+|------|--------|----------|
+| Build（构建） | 编写并版本化 Prompt、System Message、工具和模型设置 | 你的 Agent「图纸」都在这里 |
+| Trace（追踪） | 实时查看 agent loop 里的每一次模型调用和工具运行 | 给黑盒开天窗 |
+| Debug（调试） | 从历史中回放一次运行，逐步排查 | Agent 版「时光倒流」 |
+| Evaluate（评估） | 跨多次运行衡量 Agent 表现，支持评分 | 用尺子而不是感觉 |
+| Manage（管理） | Thread 以本机文件形式组织 | 你的实验都存成 JSON 文件 |
+| Generate（生成） | AI 帮你写 Prompt 和工具，还能把 Thread 变成可运行的 LangGraph Python Agent | 一键导出正式代码 |
+
+你的文件和 API Key 都留在本机，只有少量匿名使用数据用于改进产品（可关闭，见 TELEMETRY.md）。
+
+### 技术栈速览
+
+```text
+语言/工具链：TypeScript + Bun（一体化 JS runtime 和包管理器）
+桌面壳：    Electrobun（轻量级原生应用方案，类似 Electron 的替代）
+UI：        React + Tailwind CSS + shadcn/ui
+Agent 框架：Pi Agent Core（@earendil-works/pi-agent-core）
+            ——一个轻量级 agent 框架，负责核心 agent loop
+```
+
+## 第三章：核心概念（由浅入深）
+
+### 3.1 Thread —— 一切的基本单元
+
+**Thread 可以理解为一个 Agent 的完整上下文，是一份可保存、可复制、可调试的实验文件。** 它包含：
+
+| 内容 | 说明 |
+|------|------|
+| Model | 当前 Thread 运行时使用的模型 |
+| Model parameters | `temperature`、`max_tokens`、`reasoning_effort` 等运行参数 |
+| System Prompt | Agent 的全局行为设定 |
+| Variables | 可在 Prompt、消息、工具结果中引用的变量占位符 |
+| Tools | 模型可以调用的工具定义 |
+| Messages | User / Assistant 对话历史 |
+| Tool Calls | 助手消息中的工具调用请求与结果 |
+| Run History | 历史运行快照，用于回放、比较和调试 |
+| Evaluations | 人工评测记录，用于比较不同运行结果 |
+
+新建、打开、复制、移动、删除 Thread，本质都是在管理工作区里的 **Thread 文件**（JSON）。
+
+### 3.2 Model 与 Provider 的区别
+
+这是新手最容易混的一点：
+
+```text
+Model Provider（全局设置）：模型「供应商」配置。
+    —— API Key、Base URL、API 兼容模式（Anthropic Messages /
+       OpenAI Chat Completions / OpenAI Responses）、可用模型列表。
+
+Model（Thread 级选择）：某个 Thread 实际调用的「具体模型」。
+    —— provider + 模型 id + 运行参数（temperature、maxTokens 等）。
+```
+
+类比：Provider 是你家的「宽带套餐」，Model 是这次「用哪台设备上网」。
+
+### 3.3 Tools —— 模型的「手」
+
+工具定义会发送给模型，模型根据名称、描述和参数 schema 决定是否调用。LLM Space 里工具分三类：
+
+| 类型 | 说明 | 谁来执行 |
+|------|------|----------|
+| Built-in（内置） | 文件、命令、网页搜索等由应用提供的能力 | 应用自动执行，或需要人工确认时由你触发 |
+| Custom Function Tool | 你自定义的函数工具：只描述名称、用途、参数，没有内置执行后端 | 你手动填结果或外部流程补充 |
+| MCP | 来自 MCP Server 的工具 | 对应的 MCP Server 执行并返回 |
+
+一个工具定义大致长这样：
+
+```json
+{
+  "type": "function",
+  "name": "lookup_order",
+  "description": "按订单 ID 查询订单状态。",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "orderId": { "type": "string" }
+    },
+    "required": ["orderId"]
+  }
+}
+```
+
+### 3.4 Variables —— 模板化 Prompt 的基石
+
+把会变的内容抽成 `{{变量名}}` 占位符，运行时替换。内置变量自动计算取值：
+
+```text
+{{current_date}}        当前系统日期时间（可配置格式）
+{{available_skills}}    当前启用的 Skill 列表（名称+描述）
+```
+
+自定义变量又分几种：文本变量、**JSON 变量**（可遍历/条件判断）、**文件内容变量**（引用文件内容）。
+
+> 更进阶的 Jinja2 风格模板（`{% if %}`、`{% for %}`、`@include` 宏、过滤器）我们在实战第 8 步展开。
+
+### 3.5 Run History 与 Rubric 评估
+
+- **Run History**：每次运行都存一份快照，你可以回放、逐步查看，并选两次运行做对比。
+- **Rubric（评分卡）**：定义 2–6 条有序评测标准，每条标准对两次运行分别打 1（差）到 5（优）分。系统自动算非加权平均分和 `B - A` 差值。保存的 Evaluation 会含一份不可变的 Rubric 快照，之后修改定义不会改写历史记录，也不触发额外模型调用。
+
+一句话：**用客观规则打分，而不是「我瞅着这版好」。**
+
+## 第四章：实战上手（Practice）
+
+### 第 1 步：下载安装
+
+从 [最新 release](https://github.com/deer-flow/llm-space/releases/latest) 下载 DMG（macOS，Apple Silicon 和 Intel 都有），有两个版本：
+
+```text
+LLM Space           使用系统 WebView，约 27 MB，省内存省电
+LLM Space Performance  内嵌渲染引擎（Chromium/CEF），约 130 MB，
+                      渲染跨系统版本一致，性能通常更好
+```
+
+两个版本**共享同一份 `~/.llm-space` 数据**，切换版本后 Thread 和设置都还在，也都会自动更新。
+
+用户数据目录（也可以通过环境变量 `LLM_SPACE_HOME` 覆盖）：
+
+```text
+~/.llm-space
+├── workspace/            Thread 文件
+├── settings/models.json  模型 Provider 设置
+├── settings/mcp.json     MCP Server 设置
+├── settings/window.json  窗口状态
+├── settings/skills.json  Skill 发现目录
+└── traces/               追踪与调试数据
+```
+
+### 第 2 步：配置模型
+
+首次打开会有欢迎向导，它会**读取当前环境变量里可能的 API Key**，自动推荐可用的 Model Provider。看到 `Providers detected` 列表，点一下就能添加；添加成功后显示 `Ready to run`。
+
+没自动检测到也没关系：`Configure models` → Model settings 对话框，手动填 Provider、API Key、Base URL、模型列表。API 兼容模式记得选对（Anthropic Messages / OpenAI Chat Completions / OpenAI Responses / 自定义）。
+
+### 第 3 步：从示例创建第一个 Thread
+
+主界面点 `Start from Example`，选 `General Agent`。它内置一组常用工具和系统提示词，适合快速体验。
+
+```text
+Thread 内容预览：
+├── 左侧文件树：你的 workspace，Thread 以 .json 存在
+├── 中间：System Prompt 编辑器 + 消息列表
+├── 右侧：模型选择、运行设置、工具列表
+└── 右上角：Run 按钮（旁边下拉可开 ReAct Loop）
+```
+
+### 第 4 步：运行并手动执行工具
+
+点右上角 `Run` 执行当前 Thread。运行后会出现 Assistant 消息——它可能包含一次对 `skill()` 工具的调用。
+
+关键点来了：**LLM Space 默认不会自动执行工具，而是让你手动点。**
+
+- 点工具卡片右侧的**播放按钮** → 只执行这一个 Tool Call。
+- 或点底部的 `Call tools` → 一次性执行所有待运行调用。
+
+这是它的「单步调试」哲学：你可以看清模型**为什么选这个工具、传了什么参数**，再决定放不放行。
+
+### 第 5 步：处理多个 Tool Calls
+
+继续运行后，你可能看到一个 Assistant 消息里带多个工具调用。两种调试方式：
+
+```text
+方式一：点 Call tools —— 并行执行所有待运行的 Tool Calls
+方式二：单独点某个工具卡片的播放按钮 —— 只执行其中一个
+```
+
+这非常适合观察：模型为什么会同时发起这几个调用？先执行哪个、结果如何影响后续推理？
+
+### 第 6 步：启用 ReAct Loop 自动循环
+
+手动单步久了会累。点 `Run` 右侧的下拉按钮 → 运行设置 → 开启 `Enable ReAct loop`。
+
+开启后，找到想作为起点的 User Message 或 Assistant Message，点对应的 `Continue` 或 `Run from this message`，LLM Space 会**从该消息开始自动跑完后续 ReAct Loop**，直到完成或遇到需要人工处理的步骤。
+
+```text
+ReAct Loop = 模型思考 → 调用工具 → 拿到结果 → 再思考 → …
+```
+
+### 第 7 步：修改运行现场来调试
+
+LLM Space 的核心价值不只是「跑通一次对话」，而是让你能**直接改 Agent 的运行现场**：
+
+```text
+✅ 改模型和参数 → 对比不同模型的行为差异
+✅ 改 Tools     → 观察工具列表变化如何影响模型决策
+✅ 改 System Prompt → 快速迭代 Agent 行为
+✅ 改消息内容    → 复现实验条件
+✅ 改工具参数或响应 → 验证异常、边界情况和不同工具结果
+✅ 用 Rubric 评分对比运行历史 → 判断哪个版本更好
+```
+
+### 第 8 步：变量与模板（进阶）
+
+所有文本（System Prompt、消息、工具结果）都支持 Jinja2 风格模板（基于 Nunjucks）：
+
+**`@include` 宏**——把文件内容嵌进来，`~` 展开为用户主目录，文件缺失则替换为空字符串：
+
+```text
+{{@include("~/notes/writing-style.md")}}
+```
+
+**条件与循环**：
+
+```text
+{% if company_name %}
+你代表 {{company_name}}。
+{% elif region %}
+按照 {{region}} 的规范执行。
+{% endif %}
+
+{% for item in ["research", "draft", "review"] %}
+{{ loop.index }}. {{ item }}
+{% endfor %}
+```
+
+**JSON 变量**——结构化数据驱动模板：
+
+```json
+{
+  "user": { "name": "Ada", "plan": "pro" },
+  "features": ["search", "code", "vision"]
+}
+```
+
+```text
+你好 {{ profile.user.name }}——你的套餐是 {{ profile.user.plan }}。
+{% for feature in profile.features %}
+- {{ loop.index }}. {{ feature }}
+{% endfor %}
+```
+
+**过滤器**（`|` 变换）：
+
+```text
+{{ name | default("there") }}          {# 空值兜底 #}
+{{ profile.features | length }}        {# 3 #}
+{{ items | sort | join(", ") }}        {# 链式调用 #}
+```
+
+> 安全设计：只有当文本包含 `{% %}`、`@include` 宏，或含 `.`/`[`/`|`/`(` 的表达式时才会启用模板渲染；普通 `{{变量}}` 走简单替换。粘贴进来的工具结果里残缺的模板会**原样保留**，不会让运行失败。
+
+### 第 9 步：评估（Evaluate）
+
+运行两次（比如改 Prompt 前后），在 Run History 里选中它们，用一个 Rubric 分别打分。系统给出：
+
+```text
+Run A 平均分、Run B 平均分、B - A 差值
+```
+
+这个差值就是「这次改动到底有没有变好」的客观证据。
+
+### 第 10 步：生成 LangGraph Python Agent
+
+这是最有魔法的功能：**把任意一个 Thread 一键生成可运行的 [LangGraph](https://github.com/langchain-ai/langgraph) Python Agent 代码**。你在工作台里调好的 Prompt、变量、工具，导出去就是正式产品代码的起点。
+
+```text
+在 Thread 里点「生成」→ 得到 Python + LangGraph 项目
+├── graph 定义（agent 循环）
+├── 工具实现（内置工具对应 .py）
+├── system prompt 渲染逻辑（Jinja2 → Python renderer）
+└── meta_user_prompt.md 等模板文件
+```
+
+> 有趣的是，源码里生成器（`packages/core/src/generator/langgraph/`）和 TS 运行时是**双实现保持同步**的：每改一个内置变量/模板函数，两边的测试和生成代码必须一起更新——这就是「dogfooding」到骨子里的样子。
+
+## 第五章：源码架构（深入）
+
+如果你对「它到底怎么工作的」感兴趣，往下看。
+
+### 5.1 Monorepo 结构
+
+```text
+llm-space/（Bun workspace monorepo）
+├── packages/
+│   ├── core/      共享逻辑：类型、agent loop、thread storage
+│   └── ui/        共享 React 设计系统 + Thread Playground
+├── apps/
+│   ├── desktop/   桌面应用（Electrobun shell + React UI）
+│   └── web/       静态官网（landing + 只读 shared-thread viewer）
+```
+
+`packages/core` 又细分为：
+
+```text
+client/   浏览器安全的客户端：streamThread()、reduceMessages()、AgentTransport
+thread/   纯线程域逻辑：run history、Jinja2 模板渲染、token 用量统计
+server/   Node/Bun 专用：streamAgent()、文件系统存储、路径
+types/    Thread/Message/ModelConfig/Tool 等跨边界类型
+```
+
+### 5.2 数据流（核心循环）
+
+从界面点下 Run 到模型返回，整条链路：
+
+```text
+UI action
+  → Zustand store 的 run()
+  → streamThread()（core 客户端，注入 AgentTransport）
+  → 桌面版 transport = createRpcTransport()
+  → 走 RPC 流式协议（Electrobun 没有原生流，
+     用 fire-and-forget 消息按 streamId 模拟 for await）
+  → bun 主进程 StreamThreadController.run()
+  → streamAgent()（core/server）
+  → agentLoopContinue()（来自 @earendil-works/pi-agent-core）
+  → 事件迭代器 → reduceMessages() → Zustand → UI 重渲染
+```
+
+值得注意的设计点：
+
+- **工具默认 step-by-step**：`streamAgent()` 里把工具包成「调用即返回 `terminate: true` 且内容为空」，所以模型请求了工具后流程会暂停等你手动执行——这正是单步调试的底层机制。
+- **模型配置注入**：API Key、自定义 Base URL、自定义 Header 都通过注入的 `Models` 集合解析，`baseUrl` 只在本轮运行临时覆盖、`finally` 里还原，避免污染共享模型对象。
+- **权限边界**：渲染进程（webview）碰不到文件系统，所有文件操作都走 RPC 到 bun 主进程。
+
+### 5.3 Thread 文件长什么样
+
+工作区里的 Thread 就是格式化 JSON，`workspace/` 子目录映射到左侧文件树：
+
+```json
+{
+  "title": "my-agent",
+  "model": {
+    "provider": "openai",
+    "id": "gpt-4.1",
+    "params": { "temperature": 0.7, "maxTokens": 4096 }
+  },
+  "context": {
+    "systemPrompt": "You are a helpful assistant.",
+    "tools": [],
+    "messages": [
+      {
+        "id": "msg_1",
+        "role": "user",
+        "content": [{ "type": "text", "text": "帮我查询订单 A123。" }]
+      },
+      {
+        "id": "msg_2",
+        "role": "assistant",
+        "content": [{ "type": "text", "text": "我来查询。" }],
+        "toolCalls": [
+          {
+            "id": "call_1",
+            "input": { "name": "lookup_order", "arguments": { "orderId": "A123" } },
+            "output": { "content": [{ "type": "text", "text": "订单 A123 已发货。" }] }
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+### 5.4 支持导入的外部格式
+
+导入入口按扩展名选解析器（`.json` / `.jsonl`），支持 OpenAI Chat Completions 风格、Anthropic Messages 风格、Aurora 风格，以及 **DeerFlow 的 run-event JSONL**——再次印证它和 DeerFlow 的血缘关系。导入后统一归一化成 Thread 结构写入工作区。
+
+### 5.5 从源码构建
+
+```bash
+# 1. 先装 Bun（Node.js + npm 的替代品）
+curl -fsSL https://bun.sh/install | bash
+
+# 2. 装依赖
+bun install
+
+# 3. 启动本地开发版桌面应用
+mise run dev
+# （不装 mise 也可以直接用 bun 在各子包内运行）
+
+# 4. 跑测试 / 检查
+mise run test
+mise run lint      # 注意：--max-warnings 0，零警告零错误才能发版
+mise run typecheck
+```
+
+> 参与开发想用与 CI 完全一致的工具链？装 [mise](https://mise.jdx.dev)，`mise run setup` 一步装好锁定版本的 Bun 和依赖。
+
+## 避坑清单
+
+| 坑 | 正确做法 |
+|----|---------|
+| 以为工具会自动执行 | LLM Space 默认 step-by-step，模型请求工具后会暂停等你点 `Call tools`；要自动跑就开 ReAct Loop |
+| Provider 和 Model 分不清 | Provider 是全局「供应商配置」，Model 是 Thread 级「具体模型」，两者在不同层级配置 |
+| 两个版本数据会丢 | 不会，WebView 版和 Performance 版共享 `~/.llm-space`，放心切换 |
+| 手动填 API Key 总忘 | 欢迎向导会读环境变量自动检测 Provider；也可以直接在 settings 里填 |
+| 模板不生效，被原样输出了 | 检查标签是否成对（`{% if %}` 缺 `{% endif %}` 会静默回退为原始文本）；普通 `{{变量}}` 不触发模板渲染是正常的 |
+| 文件 `@include` 不报错但没内容 | 路径写错或文件缺失会替换为空字符串——这是设计，不是 bug；用文件内容变量集中管理路径 |
+| 修改 Rubric 影响了历史评分 | 不会，Evaluation 保存的是不可变 Rubric 快照，改定义不影响历史记录 |
+| 导入的 JSON 没反应 | 确认扩展名是 `.json`/`.jsonl`，且能解析出消息/Prompt/工具/模型，否则会被跳过 |
+| 想验证「这版改好了没」 | 别靠感觉，用 Rubric 对两次运行打分，看 `B - A` 差值 |
+| 用它跑了生产任务 | 它是开发调试工作台；要上线请用 Generate 导出 LangGraph 项目，或落到 DeerFlow 等生产框架 |
+
+## 小结
+
+一句话总结 LLM Space 的定位：**它把 Agent 从「黑盒聊天」变成了「可拆解、可回放、可评分、可导出」的工程化过程。**
+
+```text
+Build   → 你的 Agent 图纸
+Trace   → 给黑盒开天窗
+Debug   → 拆开每一步看
+Evaluate→ 用尺子说话
+Generate→ 一键变正式代码
+```
+
+如果你正在做 Agent 开发，或者想系统性学「harness 设计」，LLM Space 是极佳的起步工具——毕竟字节跳动的 DeerFlow 团队自己天天用它调试自己的 Agent。
+
+**进一步阅读：**
+
+- 项目仓库：https://github.com/deer-flow/llm-space （欢迎 Star）
+- 中文快速开始：https://github.com/deer-flow/llm-space/blob/main/docs/get-started.zh-CN.md
+- 核心概念（中文）：https://github.com/deer-flow/llm-space/blob/main/docs/core-concepts.zh-CN.md
+- DeerFlow 仓库：https://github.com/bytedance/deer-flow
