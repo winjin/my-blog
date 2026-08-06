@@ -1,0 +1,414 @@
+---
+title: "Perry：把 TypeScript 编译成原生二进制——告别 Electron，从理论到实战"
+description: "Perry把TypeScript编译成原生二进制，无运行时无Electron，由浅入深拆解原理与实战"
+category: tech
+tags: ["Perry", "TypeScript", "原生编译", "LLVM", "SWC", "Electron替代", "系统编程", "跨平台"]
+date: 2026-08-06
+draft: false
+cover: "https://images.unsplash.com/photo-1516116216624-53e697fedbea?w=1200&h=630&fit=crop"
+---
+
+TypeScript 开发者长期以来面临一个尴尬的现实：**写的是类型安全的现代语言，交付的却是需要 V8/Node.js 运行时的 JavaScript 包。** 桌面应用要捆绑 Electron（~150MB），CLI 工具依赖用户安装 Node，性能被 GC 和 JIT 限制。
+
+今天介绍的 **Perry**，试图彻底打破这个局面——**把 TypeScript 直接编译成原生可执行文件**。按老规矩，由浅入深：先讲清楚为什么需要 TS 原生编译（理论），再带你从安装到编译跑通第一个二进制（实践），最后深入 Perry 的编译管线与架构对比（深入），附一份 TS 原生编译避坑清单。
+
+## 第一章：为什么 TypeScript 需要「原生编译」？
+
+### JavaScript 运行时的三个结构性问题
+
+```text
+1. 运行时依赖 —— 用户必须安装 Node.js/Bun/Deno，否则跑不起来
+2. 体积膨胀   —— Electron 应用捆绑 Chromium + Node，起步 80-150MB
+3. 性能天花板 —— JIT 编译 + GC 暂停 + 单线程模型，无法触及系统级性能
+```
+
+### 传统「编译」方案的局限
+
+```text
+Bun build --compile  → 打包 JS + Bun 运行时，hello world ~90MB，仍是 JIT
+Deno compile         → 打包 JS + Deno 运行时，hello world ~80MB，仍有 GC
+pkg (by Vercel)      → 打包 JS + Node.js，已停止维护
+Nexe                → 类似 pkg，社区维护但不活跃
+```
+
+这些方案本质上是「把运行时和代码打包在一起」，并非真正的编译。Perry 的做法不同：**TypeScript -> HIR -> LLVM -> 机器码**，产出的是独立的原生二进制，运行时零依赖。
+
+### Perry 的解法
+
+```text
+TypeScript 源码
+    ↓ SWC 解析（快速、准确）
+HIR（高层中间表示）
+    ↓ 类型擦除 + 单态化
+LLVM IR
+    ↓ LLVM 优化 + 代码生成
+原生可执行文件（2-5 MB）
+```
+
+## 第二章：Perry 是什么
+
+一句话：**一个将 TypeScript 编译为原生二进制的编译器，支持 10 个平台、35+ 原生 UI 组件、真实的 npm 包兼容。**
+
+### 核心特性
+
+```text
+原生编译     → TypeScript → 机器码，无运行时、无 V8、无 Node
+跨平台       → macOS/iOS/iPadOS/Android/Linux/Windows/watchOS/tvOS/WASM/Web
+原生 UI      → AppKit/UIKit/GTK4/Win32，真正的平台组件（非 WebView）
+npm 兼容     → axios/zod/express/fastify/hono 已可原生编译
+体积小巧     → hello world ~330KB，典型 CLI 2-5MB
+编译速度     → SWC 解析 + LLVM 优化，数秒完成
+```
+
+### 技术栈
+
+```text
+解析器    → SWC（Rust 编写的 TypeScript/JavaScript 编译器）
+中间表示  → HIR（Perry 自定义的高层 IR）
+后端      → LLVM（工业级编译器基础设施）
+原生 UI   → AppKit (macOS) / UIKit (iOS) / GTK4 (Linux) / Win32 (Windows) / JNI (Android)
+```
+
+### 与 Electron/Tauri 的关键区别
+
+```text
+Electron → 每个应用捆绑 Chromium + Node，80-150MB 起步，渲染 Web UI
+Tauri    → 体积小，但仍在系统 WebView 渲染 Web 前端，逻辑用 Rust 写
+Perry    → 不用 WebView，TS 编译为机器码，直接驱动原生平台组件
+```
+
+## 第三章：核心概念（由浅入深）
+
+### 3.1 编译管线：从 .ts 到二进制
+
+Perry 的编译过程分四个阶段：
+
+```text
+1. 解析（SWC）
+   - 读取 .ts 文件，生成 AST
+   - SWC 用 Rust 编写，比 TypeScript 编译器快 10-100x
+
+2. 转换（HIR 生成）
+   - 类型擦除：泛型 → 单态化（monomorphization）
+   - NaN 装箱优化：JS 的 number 统一用 NaN-boxing 表示
+   - 闭包捕获分析：编译时检测可变捕获，保证线程安全
+
+3. 优化（LLVM）
+   - 内联、常量传播、死代码消除
+   - 自动向量化（SIMD）
+   - 链接时优化（LTO）
+
+4. 代码生成（LLVM → 机器码）
+   - 针对目标平台生成原生指令
+   - 输出独立可执行文件，无动态链接依赖
+```
+
+### 3.2 单态化（Monomorphization）
+
+Perry 处理 TypeScript 泛型的方式类似 Rust：**为每个具体类型生成独立的函数副本**。
+
+```typescript
+// TypeScript 源码
+function add<T>(a: T, b: T): T {
+  return a + b;
+}
+add<number>(1, 2);
+add<string>("hello", "world");
+```
+
+```text
+编译后：
+add_i32(a: i32, b: i32) -> i32        // number 版本
+add_str(a: string, b: string) -> string  // string 版本
+```
+
+优势：零成本抽象，泛型调用与手写具体类型一样快。代价：二进制体积略增（类似 C++ 模板）。
+
+### 3.3 NaN 装箱（NaN Boxing）
+
+JavaScript 中 `number` 是 64 位浮点数，Perry 用 NaN 装箱来高效表示：
+
+```text
+标准 IEEE 754 double：
+  sign(1) + exponent(11) + mantissa(52)
+
+NaN 装箱：
+  当 exponent 全 1 且 mantissa 非零时，这个值是 NaN
+  Perry 利用 NaN 的「无效」位来存储类型标签 + 值
+
+结果：
+  一个 64 位 slot 可以装任何 JS 值（number/string/bool/object）
+  比用 tagged union 更紧凑，比用 heap allocation 更快
+```
+
+### 3.4 编译时插件系统
+
+Perry 的插件在构建时组合，而非运行时加载：
+
+```text
+传统方案（如 Webpack 插件）：
+  运行时 → IPC 通信 → 插件处理 → 返回结果
+  开销：进程间通信 + 序列化/反序列化
+
+Perry 方案：
+  编译时 → 模块组合 → 直接内联到二进制
+  开销：零，插件函数变成直接的原生调用
+```
+
+### 3.5 真正的多线程
+
+Perry 提供编译时安全的并行原语：
+
+```typescript
+// parallelMap - 编译时保证无共享可变状态
+const results = parallelMap(items, (item) => {
+  return process(item);  // 每个闭包独立，无竞态
+});
+
+// spawn - 真正的操作系统线程
+const thread = spawn(() => {
+  // 独立线程，不能捕获可变外部变量
+});
+```
+
+编译器在编译时拒绝可变捕获，消除了数据竞争——不需要 `SharedArrayBuffer`，不需要 Worker。
+
+### 3.6 标准库与 npm 包兼容
+
+Perry 内置了 Node.js 核心 API 的原生实现：
+
+```text
+fs       → readFileSync, writeFileSync, existsSync, mkdirSync...
+path     → join, dirname, basename, extname, resolve
+crypto   → randomBytes, randomUUID, sha256, md5
+os       → platform, arch, hostname, totalmem
+Buffer   → from, alloc, toString, slice, copy
+child_process → execSync, spawnSync
+```
+
+对于热门 npm 包，Perry 用 Rust 重新实现了原生版本：
+
+```text
+数据库：mysql2, pg, mongodb, better-sqlite3, ioredis
+HTTP：  axios, node-fetch, ws, nodemailer
+安全：  bcrypt, argon2, jsonwebtoken
+工具：  uuid, nanoid, slugify, validator, dotenv
+```
+
+只需 `import` 即可使用——Perry 自动选择原生实现，无需 `npm install`。
+
+## 第四章：实战上手（Practice）
+
+### 方式一：Homebrew 安装（macOS，推荐）
+
+**第 1 步：添加 tap 并安装**
+
+```bash
+brew tap PerryTS/perry
+brew install perry
+```
+
+**第 2 步：创建一个 TypeScript 文件**
+
+```typescript
+// hello.ts
+const greeting = "Hello, Perry!";
+console.log(greeting);
+```
+
+**第 3 步：编译**
+
+```bash
+perry compile hello.ts
+# ✓ 已编译可执行文件：hello（2.3 MB）
+```
+
+**第 4 步：运行**
+
+```bash
+./hello
+# Hello, Perry!
+```
+
+就这么简单。没有 `node_modules`，没有 `package.json`，只有一个独立的二进制文件。
+
+### 方式二：其他平台安装
+
+```bash
+# Debian/Ubuntu (APT)
+# 参考 https://perryts.com 获取最新安装命令
+
+# Windows (winget)
+# 参考 https://perryts.com 获取最新安装命令
+
+# 从源码构建
+git clone https://github.com/PerryTS/perry.git
+cd perry && cargo build --release
+```
+
+### 实战：编译一个 HTTP 服务器
+
+```typescript
+// server.ts
+import { Hono } from "hono";
+
+const app = new Hono();
+
+app.get("/", (c) => {
+  return c.json({ message: "Hello from Perry native binary!" });
+});
+
+app.get("/users/:id", (c) => {
+  const id = c.req.param("id");
+  return c.json({ userId: id, name: `User ${id}` });
+});
+
+export default {
+  port: 3000,
+  fetch: app.fetch,
+};
+```
+
+```bash
+perry compile server.ts --enable-js-runtime
+# ✓ 已编译可执行文件：server（~48 MB，含 Hono 框架）
+
+./server
+# Server running on http://localhost:3000
+```
+
+### 实战：检查代码兼容性
+
+```bash
+perry check ./src
+# 验证 TypeScript 代码是否可进行原生编译
+# 输出不兼容的 API 或语法，帮助你提前修复
+```
+
+## 第五章：深入原理（Advanced）
+
+### 5.1 为什么选择 LLVM 而非 Cranelift
+
+Perry 最初尝试过 Cranelift（Rust 的编译器后端），后来切换到 LLVM：
+
+```text
+Cranelift 优势：
+- 纯 Rust，编译速度更快
+- 与 Rust 生态集成更好
+
+Cranelift 劣势：
+- 优化能力远不如 LLVM
+- 缺少某些平台的后端支持
+- SIMD 自动向量化不成熟
+
+LLVM 优势：
+- 30+ 年的优化研究积累
+- 完善的 SIMD 向量化
+- 全平台后端覆盖
+- LTO（链接时优化）支持成熟
+
+结论：为了产出高质量的原生代码，LLVM 是唯一选择
+```
+
+### 5.2 编译时 i18n 的实现
+
+Perry 的国际化方案在编译时完成：
+
+```text
+1. 字符串提取 —— 扫描源码中的 i18n 调用，提取所有字符串
+2. CLDR 复数规则 —— 内置 30+ 语言的复数规则（one/few/many/other）
+3. 编译时验证 —— 检查所有语言包的 key 是否一致
+4. 嵌入二进制 —— 翻译数据直接编译进可执行文件
+5. 运行时查找 —— O(1) 查找，几乎零开销
+```
+
+对比传统方案：
+
+```text
+传统 i18n（react-intl/i18next）：
+  运行时加载 JSON → 解析 → 查找 → 渲染
+  开销：JSON 解析 + 运行时查找 + 可能的网络请求
+
+Perry i18n：
+  编译时嵌入 → 直接内存偏移 → 渲染
+  开销：几乎为零
+```
+
+### 5.3 性能对比数据
+
+Perry 官方基准测试（Apple M1 Max，vs Node.js v25）：
+
+```text
+accumulate        18x  快  (34ms vs 617ms)
+object create     11x  快  (1ms vs 11ms)
+json roundtrip   5.3x  快  (75ms vs 394ms)
+loop overhead    4.5x  快  (12ms vs 54ms)
+math intensive   3.6x  快  (14ms vs 51ms)
+array read       3.3x  快  (4ms vs 13ms)
+fibonacci        3.2x  快  (318ms vs 1022ms)
+```
+
+体积对比：
+
+```text
+Perry hello-world    ~330 KB / 2-5 MB（典型）
+Node.js              ~80 MB
+Bun                  ~90 MB
+Electron app         ~80-150 MB 起步
+```
+
+### 5.4 编译到 WebAssembly
+
+Perry 除了原生二进制，还支持编译到 WASM：
+
+```bash
+perry compile main.ts --target wasm
+```
+
+```text
+适用场景：
+- 浏览器端运行 TypeScript（替代 AssemblyScript）
+- Cloudflare Workers / Deno Deploy 等边缘计算
+- 需要跨平台但无法使用原生二进制的环境
+
+限制：
+- 无法使用原生 UI 组件（WASM 没有 GUI）
+- 性能略低于原生编译（WASM 有沙箱开销）
+- 文件系统需要 WASI 支持
+```
+
+## 避坑清单
+
+| 坑 | 正确做法 |
+|----|---------|
+| 期望所有 npm 包都能编译 | 先用 `perry check` 验证，纯 TS 包优先，复杂 JS 包可能需要 `--enable-js-runtime` |
+| 忽略二进制体积 | 引入大型框架（Fastify + mysql2）会膨胀到 ~48MB，比 hello-world 大很多 |
+| 用 `node` 运行编译产物 | Perry 产出的是独立二进制，直接 `./main` 运行，不需要 node |
+| 混淆 `perry compile` 和 `tsc` | Perry 是编译到机器码，不是编译到 JS；类型检查用 `perry check` |
+| 期望所有 Web API 可用 | Perry 的标准库是 Node.js API 的子集，浏览器 API（DOM/Fetch）不适用 |
+| 忽略平台差异 | 原生 UI 组件在不同平台上行为不同，WASM 和 Web 目标没有 GUI |
+| 不看兼容列表就开写 | 查看 [docs.perryts.com](https://docs.perryts.com) 的 API 支持矩阵 |
+| 在 CI 中重复全量编译 | Perry 支持可重现构建，相同输入相同输出，可缓存编译结果 |
+
+## 小结
+
+一句话总结 Perry 的定位：**它是 TypeScript 生态中第一个真正意义上的原生编译器——不是打包运行时，而是编译到机器码。**
+
+```text
+SWC          → 快速解析 TypeScript
+HIR          → 类型擦除 + 单态化 + NaN 装箱
+LLVM         → 优化 + 代码生成
+Perry        → 把以上封装成一个命令行工具
+```
+
+如果你是 TypeScript 开发者，曾经因为 Electron 的体积和性能头疼；如果你在写 CLI 工具但不想让用户装 Node；如果你只是单纯好奇「TS 能不能编译成原生代码」——Perry 值得一试。
+
+更重要的是，它代表了一种趋势：**类型安全的高级语言不一定需要厚重的运行时，编译器技术的进步正在让「开发效率」和「运行效率」不再矛盾。**
+
+**进一步阅读：**
+
+- 官网：https://perryts.com
+- GitHub：https://github.com/PerryTS/perry
+- 文档：https://docs.perryts.com
+- Showcase：https://perryts.com/zh-Hans/showcase/
+- 路线图：https://perryts.com/zh-Hans/roadmap/
