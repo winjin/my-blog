@@ -1,0 +1,120 @@
+---
+title: "MCP路线图更新：AI代理通信协议的未来方向"
+description: "深入解读Model Context Protocol最新路线图，解析代理消息原语、身份认证与企业级安全"
+category: "tech"
+date: 2026-08-14
+tags: ["MCP", "AI", "protocol", "agent", "security"]
+cover: "https://images.unsplash.com/photo-1558494949-ef010cbdcc31?w=1200&h=630&fit=crop"
+draft: false
+---
+
+![网络协议](https://images.unsplash.com/photo-1558494949-ef010cbdcc31?w=800&h=400&fit=crop)
+
+## 引言
+
+Model Context Protocol（MCP）刚刚发布了更新的路线图，为接下来的规范发布设定了方向。这个协议正在从简单的请求-响应模式演进，以支持更复杂的AI代理工作负载。
+
+## 五大优先领域
+
+### 1. 代理消息原语
+
+现代AI代理工作负载不再适合标准的请求-响应模式：
+
+- **长时间运行的循环**：代理可能需要运行数小时
+- **流式推送**：服务器主动推送结果
+- **中途干预**：需要在执行过程中调整方向
+
+MCP正在引入：
+- **Tasks扩展**：异步任务管理
+- **subscriptions/listen**：服务器发起的事件
+- **progress通知**：进度更新
+
+### 2. HTTP原生传输统一
+
+2026-07-28版本后，远程MCP服务器与任何其他HTTP工作负载无异：
+
+```
+# 优势
+- 易于在任何基础设施上托管
+- 与现有API和服务兼容
+- 支持Streamable HTTP over stdio
+```
+
+### 3. 代理身份与企业级安全
+
+当前MCP授权基于用户在浏览器中批准访问。但越来越多的调用者是：
+
+- **云工作负载中的代理**
+- **代表用户行动的代理**
+- **委托权限给子代理的代理**
+
+解决方案：
+- **DPoP**（Demonstrating Proof of Possession）：即将完成标准化
+- **Workload Identity Federation**：代理身份和委托
+- **Enterprise-Managed Authorization**：企业级授权管理
+
+### 4. 改进的原语
+
+**工具调用**是大多数开发者首先接触的MCP部分，但结果处理存在挑战：
+
+```
+# 问题
+tools/call响应可以以多种形式携带相同输出
+客户端不知道哪种形式会被模型使用
+
+# 解决方案
+标准化一个清晰的契约
+渐进式发现：服务器提供小入口点，对话收窄时再展示更多
+```
+
+### 5. 改进的SDK开发体验
+
+SDK是开发者体验MCP的方式。投资重点：
+- 符合规范的符合性测试
+- 跨平台和语言的直观API
+- 准确的文档
+
+## 实际影响
+
+### 对开发者
+
+```python
+# 旧模式：需要处理多种响应格式
+response = call_tool("search", {"query": "..."})
+if response.format == "text":
+    handle_text(response.content)
+elif response.format == "json":
+    handle_json(response.content)
+
+# 新模式：标准化契约
+response = call_tool("search", {"query": "..."})
+handle_response(response)  # 统一处理
+```
+
+### 对企业
+
+- **代理身份验证**：无需粘贴API密钥
+- **委托权限**：子代理获得有限权限
+- **审计追踪**：完整的代理行动记录
+
+## 避坑清单
+
+| 问题 | 原因 | 解决方案 |
+|-----|------|---------|
+| 代理无法访问远程服务器 | 传输层配置错误 | 使用Streamable HTTP |
+| 工具调用结果解析失败 | 响应格式不匹配 | 等待标准化契约 |
+| 代理权限过大 | 缺少委托机制 | 实现Workload Identity |
+| SDK不符合规范 | 使用旧版本 | 更新到最新SDK |
+
+## 参与方式
+
+1. **加入工作组**：每个优先领域都有对应的工作组
+2. **提出SEP**：规范增强提案
+3. **实验性扩展**：使用`experimental-ext-`仓库
+4. **直接贡献**：规范、SDK和工具
+
+## 总结
+
+MCP正在从简单的工具调用协议演进为完整的代理通信基础设施。关注这五大领域，将帮助你在AI代理时代保持领先。
+
+工具是为人服务的，理解协议演进方向，能让你构建更持久的系统。

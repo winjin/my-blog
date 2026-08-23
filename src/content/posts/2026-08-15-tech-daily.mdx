@@ -1,0 +1,151 @@
+---
+title: "ATProto Spaces：去中心化社交网络的私有数据革命"
+description: "深入解析AT Protocol Spaces Alpha，如何在保持去中心化优势的同时支持非公开数据"
+category: "tech"
+date: 2026-08-15
+tags: ["atproto", "bluesky", "decentralized", "privacy", "social-network"]
+cover: "https://images.unsplash.com/photo-1611162617474-5b21e879e113?w=1200&h=630&fit=crop"
+draft: false
+---
+
+![社交网络](https://images.unsplash.com/photo-1611162617474-5b21e879e113?w=800&h=400&fit=crop)
+
+## 引言
+
+ATProto Spaces是AT Protocol自发布以来最大的更新。它解决了去中心化协议的一个核心矛盾：**如何在保持开放性的同时支持非公开数据**。
+
+## 背景：为什么需要Spaces？
+
+AT Protocol的设计哲学是**所有数据默认公开**：
+
+- 每条帖子、每个关注、每个点赞都公开存储
+- 任何人都可以托管服务器并访问全局数据流
+- 这使得Bluesky、Tangled等应用可以大规模运行
+
+但现实需求需要非公开数据：
+- 个人设置和草稿
+- 私人书签
+- 会员制论坛
+- 订阅制内容
+
+## 什么是Space？
+
+Space是一个**迷你AT Protocol网络**，可以设置访问控制：
+
+```
+Space = 访问控制 + 数据存储 + 同步协议
+```
+
+### 核心特性
+
+1. **访问控制**：Space authority（一个DID）决定谁可以访问
+2. **非加密**：Space提供访问控制，不是保密性
+3. **灵活规模**：从1条记录到10亿条记录
+4. **实时同步**：比公共广播协议更轻量
+
+### 使用场景
+
+| 场景 | Space规模 | 示例 |
+|-----|----------|------|
+| 个人数据 | 1个成员 | 设置、草稿、书签 |
+| 订阅内容 | 少量成员 | 付费newsletter |
+| 社区 | 数百万成员 | 论坛、群组 |
+
+## 技术架构
+
+```
+用户A (DID)
+    ↓ 发布记录
+PDS (Personal Data Server)
+    ↓ 存储到
+Space (权限控制)
+    ↓ 同步到
+应用视图 (AppView)
+```
+
+### 与公共数据的区别
+
+| 特性 | 公共数据 | Space数据 |
+|-----|---------|----------|
+| 可见性 | 全球公开 | 仅授权用户 |
+| 中继 | 全局中继广播 | 直接从PDS同步 |
+| 实时性 | 批量同步 | 实时同步 |
+| 开销 | 高（所有数据） | 低（仅相关数据） |
+
+## 开发体验
+
+### Alpha PDS
+
+官方提供托管PDS用于实验：
+
+```bash
+# 1. 获取邀请码
+# 访问 https://bsky.network/account
+
+# 2. 创建账号
+# 使用邀请码注册
+
+# 3. 开始开发
+# 使用TypeScript SDK
+```
+
+### 本地开发
+
+```bash
+# 拉取Alpha PDS镜像
+docker pull ghcr.io/bluesky-social/atproto:pds-spaces-alpha
+
+# 运行
+docker run -d -p 3000:3000 ghcr.io/bluesky-social/atproto:pds-spaces-alpha
+```
+
+### 示例应用
+
+**Bulletin**是一个示例应用，展示Space的用法：
+
+```typescript
+// 创建一个公告板Space
+const board = await createSpace({
+  name: "My Bulletin Board",
+  type: "community"
+});
+
+// 只有关注者可以查看
+await board.setAccessControl({
+  type: "followers"
+});
+```
+
+## 生态系统
+
+多个PDS实现已开始支持Spaces：
+
+- **ZDS**：用Zig编写的PDS
+- **atproto-crates**：Rust PDS
+- **rsky**：Blacksky维护的Rust PDS
+- **HappyView**：AppView框架
+
+## 注意事项
+
+**这是Alpha版本**：
+
+1. **不要用于生产**：会有破坏性变更
+2. **不要上传敏感信息**：未经安全审查
+3. **不要依赖数据持久性**：可能随时删除
+4. **不要指向非开发者**：账号可能无法迁移
+
+## 总结
+
+ATProto Spaces开启了去中心化社交网络的新篇章：
+
+- **保持去中心化优势**：身份可移植、数据可互操作
+- **支持现实需求**：私有数据、访问控制、实时同步
+- **生态系统活跃**：多个实现并行开发
+
+**给开发者的建议：**
+
+1. 现在就开始实验，为正式发布做准备
+2. 关注atmosphere.community论坛的更新
+3. 考虑你的应用如何利用Space支持新场景
+
+工具是为人服务的，去中心化协议正在变得越来越实用。

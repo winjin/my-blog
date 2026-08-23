@@ -1,0 +1,130 @@
+---
+title: "Racket入门：代码即数据的编程哲学"
+description: "从Lisp到Racket的演化历程，探索homoiconicity和语言导向编程的实践"
+category: "tech"
+date: 2026-08-13
+tags: ["racket", "lisp", "functional-programming", "macros"]
+cover: "https://images.unsplash.com/photo-1550439062-609e1531270e?w=1200&h=630&fit=crop"
+draft: false
+---
+
+![Racket编程](https://images.unsplash.com/photo-1515879218367-8466d910auj2?w=800&h=400&fit=crop)
+
+## 引言
+
+> "Lisp值得学习，因为当你最终理解它时，你将获得深刻的启蒙体验。" — Eric S. Raymond
+
+今天你将学习一门来自编程史上最古老、最独特家族的语言。在这门语言中，**代码就是数据**，括号代表纯粹的结构，程序可以编写程序。
+
+## Lisp的诞生与演化
+
+Lisp诞生于**1958年**，由John McCarthy在MIT发明。它比Python（1991年）和JavaScript（1995年）早了30多年：
+
+| 年份 | 事件 |
+|-----|------|
+| 1958 | McCarthy在MIT发明Lisp |
+| 1975 | Sussman和Steele创建Scheme |
+| 1984 | Common Lisp标准化 |
+| 1995 | PLT Scheme（现Racket）诞生 |
+| 2010 | PLT Scheme更名为Racket |
+
+Lisp诞生了许多我们现在认为"现代"的概念：
+
+- **垃圾回收**：为Lisp而发明
+- **一等函数**：函数作为参数传递
+- **REPL**：交互式读取-求值-打印循环
+- **条件表达式**：返回值的`if`
+- **Homoiconicity**：代码是语言本身的数据结构
+
+## Racket：语言工厂
+
+Racket不只是Scheme的继承者，它是一个**语言构建语言**。其非官方口号是"语言导向编程"——如果你的问题需要自己的语言，Racket可以让你在一个下午内构建一个。
+
+### 基础语法
+
+```racket
+#lang racket
+
+;; 定义常量
+(define pi-approx 3.14159)
+
+;; 定义函数
+(define (circle-area r)
+  (* pi-approx r r))
+
+(circle-area 2)   ; => 12.56636
+```
+
+### 列表操作
+
+Lisp的核心是列表处理：
+
+```racket
+(list 1 2 3)          ; => '(1 2 3)
+(first '(1 2 3))      ; => 1
+(rest '(1 2 3))       ; => '(2 3)
+(cons 0 '(1 2 3))     ; => '(0 1 2 3)
+```
+
+### 高阶函数
+
+```racket
+(map (lambda (x) (* x x)) '(1 2 3 4 5))
+; => '(1 4 9 16 25)
+
+(filter even? '(1 2 3 4 5 6))
+; => '(2 4 6)
+
+(foldl + 0 '(1 2 3 4 5))
+; => 15
+```
+
+## 代码即数据的魔法
+
+这是Lisp最强大的特性。使用引号`'`，代码变成数据：
+
+```racket
+'(+ 1 2)          ; => 列表 (+ 1 2)，不是数字3
+(first '(+ 1 2))  ; => 符号 +
+(eval '(+ 1 2))   ; => 3
+```
+
+**你可以用数据构建程序，用程序编写程序**。这就是homoiconicity，也是Lisp拥有真正宏的原因。
+
+### 自定义宏
+
+Racket没有`while`循环？让我们自己发明一个：
+
+```racket
+(define-syntax-rule (while condition body ...)
+  (let loop ()
+    (when condition
+      body ...
+      (loop))))
+
+(define counter 0)
+(while (< counter 5)
+  (displayln counter)
+  (set! counter (+ counter 1)))
+```
+
+**你刚刚扩展了语言！**
+
+## 谁在使用Lisp？
+
+- **Clojure**：Nubank（拉丁美洲最大数字银行）在生产环境使用
+- **Common Lisp**：Google Flights的前身ITA Software使用
+- **Emacs Lisp**：数百万用户每天在不知情的情况下运行Lisp
+- **Racket**：用于语言研究、形式验证、排版出版
+
+## 总结
+
+Alan Kay称Lisp是"软件的麦克斯韦方程组"：一个微小的核心，可以推导出一切。
+
+**给开发者的建议：**
+
+1. 学习Racket不是为了用它写代码，而是为了改变你思考编程的方式
+2. 宏是强大的工具，但要谨慎使用
+3. 探索Racket生态系统：Beautiful Racket、SICP等经典资源
+
+工具是为人服务的，理解编程语言的设计哲学，能让你成为更好的程序员。

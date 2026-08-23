@@ -1,0 +1,248 @@
+---
+title: "MartyPC：用Rust重写的跨平台早期PC模拟器"
+description: "深入解析MartyPC项目，如何用Rust实现高性能的IBM PC/XT/AT模拟器"
+category: "tech"
+date: 2026-08-19
+tags: ["rust", "emulator", "retro-computing", "ibm-pc"]
+cover: "https://images.unsplash.com/photo-1517694712202-14dd9538aa97?w=1200&h=630&fit=crop"
+draft: false
+---
+
+![复古电脑](https://images.unsplash.com/photo-1517694712202-14dd9538aa97?w=800&h=400&fit=crop)
+
+## 引言
+
+MartyPC是一个用Rust编写的跨平台早期PC模拟器，支持IBM PC/XT/AT及其兼容机。它不仅是一个怀旧工具，更是学习计算机体系结构的绝佳教材。
+
+## 为什么用Rust重写？
+
+### 性能优势
+
+```
+C/C++模拟器:
+├── 手动内存管理
+├── 容易出现内存泄漏
+└── 跨平台编译复杂
+
+Rust模拟器:
+├── 零成本抽象
+├── 编译时内存安全
+└── 原生跨平台支持
+```
+
+### 安全性
+
+```rust
+// Rust的所有权系统防止常见错误
+struct CPU {
+    registers: Registers,
+    memory: Vec<u8>,
+}
+
+impl CPU {
+    fn execute(&mut self, instruction: u8) {
+        // 编译器确保不会出现数据竞争
+        // 不会出现悬垂指针
+        // 不会出现缓冲区溢出
+    }
+}
+```
+
+## 支持的硬件
+
+### 视频卡
+
+| 显卡 | 分辨率 | 颜色 | 状态 |
+|-----|-------|------|------|
+| MDA | 720x350 | 单色 | ✅ |
+| Hercules | 720x350 | 单色 | ✅ |
+| CGA | 320x200 | 4色 | ✅ |
+| EGA | 640x350 | 16色 | ✅ |
+| VGA | 640x480 | 256色 | ✅ |
+
+### 扩展卡
+
+- **Sidecar内存**：可扩展内存
+- **AdLib声卡**：音乐支持
+- **各种I/O设备**：串口、并口等
+
+## 技术架构
+
+### CPU模拟
+
+```rust
+// 简化的8088 CPU结构
+struct Intel8088 {
+    // 寄存器
+    ax: u16,
+    bx: u16,
+    cx: u16,
+    dx: u16,
+    si: u16,
+    di: u16,
+    bp: u16,
+    sp: u16,
+    
+    // 段寄存器
+    cs: u16,
+    ds: u16,
+    es: u16,
+    ss: u16,
+    
+    // 标志位
+    flags: u16,
+    
+    // 内存
+    memory: Box<[u8; 1024 * 1024]>, // 1MB
+}
+
+impl Intel8088 {
+    fn execute_instruction(&mut self) -> u32 {
+        let opcode = self.fetch_byte();
+        match opcode {
+            0x89 => self.mov_reg_reg(),
+            0xB8..=0xBF => self.mov_reg_imm(),
+            // ... 更多指令
+            _ => panic!("Unknown opcode: {:02X}", opcode),
+        }
+    }
+}
+```
+
+### 内存管理
+
+```rust
+// 分段内存访问
+impl Intel8088 {
+    fn translate_address(&self, segment: u16, offset: u16) -> usize {
+        ((segment as usize) << 4) + (offset as usize)
+    }
+    
+    fn read_byte(&self, segment: u16, offset: u16) -> u8 {
+        let addr = self.translate_address(segment, offset);
+        self.memory[addr]
+    }
+}
+```
+
+### 中断处理
+
+```rust
+// 中断向量表
+struct InterruptVectorTable {
+    vectors: [u32; 256], // 段:偏移
+}
+
+impl InterruptVectorTable {
+    fn handle_interrupt(&mut self, interrupt: u8) {
+        let vector = self.vectors[interrupt as usize];
+        let segment = (vector >> 16) as u16;
+        let offset = (vector & 0xFFFF) as u16;
+        // 跳转到中断处理程序
+    }
+}
+```
+
+## Web版本
+
+MartyPC提供Web版本，可以直接在浏览器中运行：
+
+```html
+<!-- 嵌入示例 -->
+<canvas id="display"></canvas>
+<script type="module">
+  import init from './marty_web.js';
+  init();
+</script>
+```
+
+### WebAssembly性能
+
+```
+性能对比:
+├── 原生Rust: 100%
+├── WebAssembly: 85-95%
+└── JavaScript: 20-30%
+```
+
+## 开发体验
+
+### 构建项目
+
+```bash
+# 克隆仓库
+git clone https://github.com/dbalsom/martypc
+cd martypc
+
+# 构建原生版本
+cargo build --release
+
+# 构建Web版本
+wasm-pack build --target web
+```
+
+### 调试支持
+
+```rust
+// 内置调试器
+impl CPU {
+    fn debug_dump(&self) {
+        println!("AX: {:04X}", self.ax);
+        println!("BX: {:04X}", self.bx);
+        println!("CX: {:04X}", self.cx);
+        println!("DX: {:04X}", self.dx);
+        println!("CS:IP {:04X}:{:04X}", self.cs, self.ip);
+    }
+}
+```
+
+## 实际应用
+
+### 教育用途
+
+1. **计算机体系结构**：理解CPU如何工作
+2. **汇编语言**：学习8086汇编
+3. **操作系统**：理解DOS如何启动
+
+### 复古游戏
+
+```rust
+// 运行经典游戏
+fn main() {
+    let mut pc = IBMPC::new();
+    pc.load_disk("doom.img");
+    pc.run();
+}
+```
+
+### 软件历史保护
+
+- 保存早期软件的运行环境
+- 研究历史软件的行为
+- 保护数字文化遗产
+
+## 避坑清单
+
+| 问题 | 原因 | 解决方案 |
+|-----|------|---------|
+| 性能不佳 | 调试模式 | 使用release构建 |
+| 显示异常 | 显卡模拟不完整 | 检查兼容性列表 |
+| 输入延迟 | 事件处理问题 | 调整帧率设置 |
+| Web版本卡顿 | 浏览器限制 | 使用原生版本 |
+
+## 总结
+
+MartyPC展示了Rust在系统级编程中的优势：
+
+1. **安全性**：编译时防止内存错误
+2. **性能**：零成本抽象，接近C的速度
+3. **跨平台**：原生支持WebAssembly
+4. **可维护性**：现代化的代码组织
+
+**给开发者的建议：**
+
+1. 学习模拟器开发是理解计算机体系结构的绝佳方式
+2. Rust非常适合系统级项目，提供安全性与性能的平衡
+3. WebAssembly让模拟器可以轻松跨平台部署
+
+工具是为人服务的，复古计算不仅是怀旧，更是学习。
