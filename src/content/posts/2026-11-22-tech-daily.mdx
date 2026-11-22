@@ -1,0 +1,167 @@
+---
+title: "T3 Code 入门指南：一个界面调度 Claude Code、Codex 与 Cursor 的 AI 编程控制中心"
+description: "T3 Code 是开源的编程智能体控制中心，支持在同一界面调度多个 AI 编程助手，用你自己的订阅，不转售 token。本文从安装到进阶配置，附代码示例与避坑清单。"
+category: "tech"
+date: 2026-11-22
+tags: ["AI", "coding-agent", "t3-code", "claude-code", "codex", "cursor", "developer-tools"]
+cover: "https://images.unsplash.com/photo-1555066931-4365d14bab8c?w=1200&h=630&fit=crop"
+draft: false
+---
+
+![T3 Code 控制中心](https://images.unsplash.com/photo-1555066931-4365d14bab8c?w=800&h=400&fit=crop)
+
+## 引言
+
+你是不是也有过这样的困扰：Claude Code 写得好，Codex 懂得多，Cursor 交互顺手，却得在三个窗口之间来回切换，还要分别登录、分别付费、分别管理 API Key？
+
+[T3 Code](https://t3.codes/zh) 正是为了解决这个“多智能体割裂”问题而生。它是一个**开源的编程智能体控制中心**，让你在同一个界面里调度 Claude Code、Codex、Antigravity、OpenCode、Cursor 和 Grok，使用**你自己的订阅**，不转售 token，也不设额度上限。
+
+简单说，T3 Code 把多个 AI 编程助手聚到一个窗口里，像“遥控器”一样调度它们干活。
+
+## 快速上手
+
+### 1. 下载安装
+
+T3 Code 提供 macOS 桌面版，以及 iOS 和 Android 移动端：
+
+- macOS：https://github.com/pingdotgg/t3code/releases
+- iOS：App Store 搜索 “T3 Code Remote Claude More”
+- Android：Google Play 搜索 “com.t3tools.t3code”
+
+安装完成后打开，你会看到一个干净的控制中心界面，左侧是智能体列表，右侧是对话窗口。
+
+### 2. 接入你的智能体（用你自己的订阅）
+
+T3 Code **不转售 token**，你需要用自己的凭据登录各个智能体。在设置里依次完成：
+
+| 智能体 | 登录方式 | 对应命令 |
+|--------|---------|----------|
+| Claude Code | `claude auth login` | Claude 官方账号 |
+| Codex CLI | `codex login` | OpenAI 账号 |
+| OpenCode | `opencode auth` | OpenCode 账号 |
+| Cursor | `@cursor/sdk` | Cursor Pro 订阅 |
+| Grok CLI | `grok login` | xAI 账号 |
+| Antigravity | Google 登录 | Google 账号 |
+
+以 Claude Code 为例，打开 T3 Code 设置 → 智能体 → 添加 Claude Code，然后在终端运行：
+
+```bash
+claude auth login
+```
+
+完成授权后，T3 Code 就会显示该智能体已就绪，你可以直接在对话框里选择它开始写代码。
+
+### 3. 第一次对话
+
+登录完成后，新建一个线程，在模型选择器里挑一个智能体（比如 Claude Code），然后输入：
+
+> 帮我写一个 Python 脚本，读取当前目录下所有 `.md` 文件，统计每个文件的单词数，并按数量降序输出。
+
+T3 Code 会把请求发给 Claude Code，生成代码并写入文件。你可以在右侧预览 diff，满意后一键应用。
+
+## 核心功能
+
+### 多智能体线程调度
+
+T3 Code 的核心是“线程”。每个线程可以绑定一个智能体，不同线程互不干扰：
+
+- 线程 A 用 Claude Code 重构后端 API
+- 线程 B 用 Codex 写前端组件
+- 线程 C 用 Cursor 调试 CSS 样式
+
+你可以随时在线程之间切换，上下文各自独立。
+
+### 线程进行中切换模型
+
+如果当前智能体表现不理想，T3 Code 支持在对话进行中切换模型，无需重新开始。比如发现 Claude Code 生成的正则表达式有问题，可以一键切到 Codex 再试一次。
+
+### 内置终端，支持高级 TUIs
+
+T3 Code 自带终端，不仅能跑命令，还能在里面直接使用 `vim`、`htop`、`lazygit` 等交互式界面工具。这意味着你不需要额外开一个 iTerm 或 Windows Terminal，所有操作都在一个窗口里完成。
+
+### 远程 VM 连接，无需 Tailscale
+
+T3 Code 可以连接远程虚拟机进行开发，且**不需要 Tailscale 或复杂的组网配置**。适合在公司服务器或家里 NAS 上写代码，本地只需打开 T3 Code 客户端即可。
+
+## 进阶实战：一键 PR 与分支管理
+
+T3 Code 的一个亮点是 Git 集成。每个智能体线程写入自己的分支，满意后一键在 GitHub 上创建 PR，标题、描述和更新日志自动生成。
+
+### 操作流程
+
+1. 在 T3 Code 里让智能体修改代码（比如新增一个功能）
+2. 查看右侧 diff 预览，确认无误
+3. 点击“提交并推送”，T3 Code 会：
+   - 自动创建一个独立分支（如 `feat/xxx`）
+   - 推送到你的 GitHub 仓库
+   - 生成 PR 标题和描述
+   - 打开浏览器创建 PR
+
+支持草稿 PR、堆叠 PR 和修改 PR，不用在终端里来回切换。
+
+## 自建实例：从源码运行
+
+T3 Code 是开源的（MIT 许可证，GitHub: pingdotgg/t3code，70k+ 星标），你可以 fork 后自行托管或二次开发。
+
+### 本地运行步骤
+
+```bash
+# 1. fork 并克隆仓库
+gh repo fork pingdotgg/t3code --clone
+
+# 2. 进入目录并安装依赖
+cd t3code
+vp install
+
+# 3. 启动开发服务器
+vp run dev
+```
+
+启动后访问 `http://localhost:4001` 即可看到本地版本的 T3 Code 控制中心。
+
+你可以：
+- 改 UI：按自己的喜好重新设计界面
+- 加智能体：接入自己的工具、模型和工作流
+- 发布自己的版本：自行托管，或以自己的名义分发
+
+下面是一个简单的自定义智能体接入示例（伪代码，供参考）：
+
+```ts
+// apps/core/src/agents/custom-agent.ts
+import { Agent } from './base';
+
+export class CustomAgent extends Agent {
+  name = 'my-custom-agent';
+  
+  async run(prompt: string) {
+    // 调用你自己的模型 API
+    const response = await fetch('https://your-api.com/complete', {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${process.env.MY_API_KEY}` },
+      body: JSON.stringify({ prompt }),
+    });
+    
+    return response.text();
+  }
+}
+```
+
+## 避坑清单
+
+| 坑点 | 说明 | 解决办法 |
+|------|------|----------|
+| 忘记登录智能体 | T3 Code 不自带 token，每个智能体都要单独登录 | 先在设置里完成所有智能体的 `auth login` |
+| 远程连接失败 | 远程 VM 端口未开放或防火墙拦截 | 检查 SSH 端口（通常 22）是否可达，确认安全组规则 |
+| PR 创建失败 | GitHub 授权过期或仓库权限不足 | 在 T3 Code 设置里重新授权 GitHub，确认有 `repo` 权限 |
+| 模型切换丢失上下文 | 切换智能体后，新线程不会继承旧线程的对话历史 | 需要在同一个线程内切换模型，不要跨线程 |
+| 移动端体验差 | 复杂代码编辑在手机上不便 | 移动端适合查看和简单指令，重构建议用桌面端 |
+| 依赖安装慢 | `vp install` 可能需要几分钟 | 耐心等待，或检查网络是否能访问 npm 注册源 |
+
+## 总结
+
+T3 Code 把 Claude Code、Codex、Cursor 等多个 AI 编程助手聚到一个界面里，用你自己的订阅，不转售 token，支持多智能体线程调度、模型切换、内置终端和远程 VM 连接。一键 PR 和分支管理让协作更顺畅，开源 MIT 协议也方便你 fork 自建。
+
+如果你正在同时使用多个 AI 编程工具，切来切去觉得烦，T3 Code 值得花半小时试一下。
+
+下载地址：https://t3.codes/zh/download
+源码仓库：https://github.com/pingdotgg/t3code
