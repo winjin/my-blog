@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="330" viewBox="0 0 1200 330">
+  <rect width="1200" height="330" fill="#f8fafc"/>
+  <text x="40" y="54" font-size="30" font-weight="bold" fill="#0f172a" font-family="PingFang SC, Hiragino Sans GB, sans-serif">一次 MATCH 查询的内部流程</text>
+
+  <g font-family="PingFang SC, Hiragino Sans GB, sans-serif">
+    <rect x="40" y="110" width="190" height="120" rx="14" fill="#ffffff" stroke="#93c5fd"/>
+    <text x="135" y="154" font-size="19" font-weight="bold" fill="#1e3a8a" text-anchor="middle">① 用户输入</text>
+    <text x="135" y="190" font-size="17" fill="#334155" text-anchor="middle">MATCH '全文搜索'</text>
+
+    <path d="M238 170 L292 170" stroke="#2563eb" stroke-width="3" marker-end="url(#a2)"/>
+    <rect x="300" y="110" width="190" height="120" rx="14" fill="#ffffff" stroke="#93c5fd"/>
+    <text x="395" y="154" font-size="19" font-weight="bold" fill="#1e3a8a" text-anchor="middle">② 查询分词</text>
+    <text x="395" y="190" font-size="17" fill="#334155" text-anchor="middle">trigram / unicode61</text>
+
+    <path d="M498 170 L552 170" stroke="#2563eb" stroke-width="3" marker-end="url(#a2)"/>
+    <rect x="560" y="110" width="190" height="120" rx="14" fill="#ffffff" stroke="#93c5fd"/>
+    <text x="655" y="154" font-size="19" font-weight="bold" fill="#1e3a8a" text-anchor="middle">③ 查倒排表</text>
+    <text x="655" y="190" font-size="17" fill="#334155" text-anchor="middle">取候选文档集合</text>
+
+    <path d="M758 170 L812 170" stroke="#2563eb" stroke-width="3" marker-end="url(#a2)"/>
+    <rect x="820" y="110" width="190" height="120" rx="14" fill="#ffffff" stroke="#93c5fd"/>
+    <text x="915" y="154" font-size="19" font-weight="bold" fill="#1e3a8a" text-anchor="middle">④ BM25 排序</text>
+    <text x="915" y="190" font-size="17" fill="#334155" text-anchor="middle">越相关的排越前</text>
+
+    <path d="M1018 170 L1072 170" stroke="#2563eb" stroke-width="3" marker-end="url(#a2)"/>
+    <rect x="1080" y="110" width="90" height="120" rx="14" fill="#eff6ff" stroke="#2563eb"/>
+    <text x="1125" y="154" font-size="18" font-weight="bold" fill="#1e3a8a" text-anchor="middle">⑤</text>
+    <text x="1125" y="190" font-size="16" fill="#334155" text-anchor="middle">高亮</text>
+
+    <text x="40" y="282" font-size="18" fill="#475569">关键点：①②③④ 都由一条 CREATE VIRTUAL TABLE ... USING fts5(...) 声明后自动完成，你只需写 SELECT ... MATCH。</text>
+  </g>
+  <defs><marker id="a2" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto"><path d="M0 0 L10 4 L0 8 z" fill="#2563eb"/></marker></defs>
+</svg>

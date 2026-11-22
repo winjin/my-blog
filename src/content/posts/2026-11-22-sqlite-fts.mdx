@@ -1,0 +1,276 @@
+---
+title: "SQLite 全文搜索入门：从 FTS5 到中文检索的完整实践"
+description: "用 Python 内置的 sqlite3 从零搭建全文搜索：先跑通 FTS5，再掌握 MATCH 语法与 BM25 排序，最后解决中文分词的坑。附可运行示例、三张原理图与避坑清单。"
+category: "tech"
+date: 2026-11-22
+tags: ["SQLite", "FTS5", "全文搜索", "中文分词", "Python", "数据库"]
+cover: "https://images.unsplash.com/photo-1544383835-bda2bc66a55d?w=1200&h=630&fit=crop"
+draft: false
+---
+
+## 引言：搜索不该只是 `LIKE '%关键词%'`
+
+给应用加搜索功能，很多人的第一反应是写一条 SQL：
+
+```sql
+SELECT * FROM articles WHERE body LIKE '%全文搜索%';
+```
+
+小数据量时它确实能用，但很快会撞上三堵墙：
+
+1. **慢**：通配符开头的 `LIKE` 走不了普通索引，数据一多就是全表扫描。
+2. **笨**：它只会判断「有没有」，不会判断「有多相关」。搜「全文搜索」，标题精确命中的文章和正文顺带提到一次的文章排在一起。
+3. **不会断词**：英文的大小写、词形变化，中文的词组边界，它一概不处理。
+
+SQLite 内置了一个被严重低估的模块：**FTS5**（Full-Text Search version 5）。它是一个**虚拟表**，会在你写入文档时自动维护**倒排索引**——一张「词项 → 文档列表」的映射表。查询时按词查表，而不是逐行扫描。
+
+![倒排索引](/images/fts-inverted-index.png)
+
+这篇文章按四层来走：先五分钟跑通，再学查询语法，然后攻中文分词，最后讲工程化用法。所有示例都用 Python 标准库 `sqlite3`，不用装任何第三方包。
+
+## 第一层：五分钟跑通 FTS5
+
+下面是一个**完整可运行**的最小例子。把代码存成 `fts_demo.py`，直接 `python3 fts_demo.py`：
+
+```python
+import sqlite3
+
+con = sqlite3.connect(":memory:")
+
+# 1. 建一张 FTS5 虚拟表；title 和 body 是参与索引的列
+con.execute("CREATE VIRTUAL TABLE docs USING fts5(title, body)")
+
+# 2. 像普通表一样插入数据
+con.executemany(
+    "INSERT INTO docs(title, body) VALUES (?, ?)",
+    [
+        ("SQLite 入门", "SQLite 是一个轻量级数据库，全文搜索用 FTS5。"),
+        ("FTS5 教程", "FTS5 支持短语查询和 BM25 排序。"),
+    ],
+)
+
+# 3. 用 MATCH 查询；注意 MATCH 的左侧必须是虚拟表名
+rows = con.execute(
+    "SELECT title FROM docs WHERE docs MATCH ?", ("SQLite",)
+).fetchall()
+
+print(rows)  # [('SQLite 入门',)]
+```
+
+三个关键点：
+
+- `CREATE VIRTUAL TABLE ... USING fts5(...)` 创建的是虚拟表，数据仍然由 SQLite 管理，但索引结构由 FTS5 维护。
+- 插入、更新、删除都走普通 SQL，索引自动同步。
+- 查询用 `MATCH` 而不是 `WHERE 列 LIKE`。`MATCH` 支持查询语法，`LIKE` 不支持。
+
+如果只查某一列，用列名限定，避免误伤：
+
+```python
+con.execute(
+    "SELECT title FROM docs WHERE docs MATCH ?", ("title : SQLite",)
+).fetchall()
+# [('SQLite 入门',)]
+```
+
+## 第二层：掌握查询语法
+
+`MATCH` 右侧的字符串是一门小型查询语言。常用的有：
+
+| 语法 | 写法示例 | 含义 |
+|------|----------|------|
+| 单词 | `SQLite` | 包含该词元 |
+| 短语 | `"全文搜索"` | 词元必须按此顺序相邻出现 |
+| 前缀 | `fts*` | 以 `fts` 开头的词元 |
+| 列限定 | `title : SQLite` | 只在该列中匹配 |
+| 布尔 | `SQLite OR FTS5`、`SQLite NOT FTS5` | 或 / 非（AND 是默认关系） |
+| 邻近 | `NEAR(SQLite FTS5, 5)` | 两词相距不超过 5 个词元 |
+
+### 让结果按相关性排序：`bm25()`
+
+FTS5 默认按 BM25 打分排序，**越相关的越靠前**——这是 `LIKE` 完全给不了的能力。`bm25()` 返回的是负值，越小越相关：
+
+```python
+rows = con.execute(
+    "SELECT title, bm25(docs) AS score FROM docs "
+    "WHERE docs MATCH ? ORDER BY score", ("SQLite",)
+).fetchall()
+```
+
+### 高亮与摘要：`highlight()` / `snippet()`
+
+搜索结果页最需要的两个函数：
+
+```python
+# 命中词用 <b> 包起来；第 1 个参数是列序号（title=0, body=1）
+con.execute(
+    "SELECT highlight(docs, 1, '<b>', '</b>') FROM docs WHERE docs MATCH ?",
+    ("排序",),
+).fetchall()
+# [('FTS5 支持短语查询和 BM25 <b>排序</b>。',)]
+
+# 截取命中词附近的片段；末尾 10 表示最多保留约 10 个词元
+con.execute(
+    "SELECT snippet(docs, 1, '[', ']', '…', 10) FROM docs WHERE docs MATCH ?",
+    ("FTS5",),
+).fetchall()
+```
+
+一次查询的内部流程如下：
+
+![MATCH 查询流程](/images/fts-query-flow.png)
+
+## 第三层：中文搜索的分词坑（重点）
+
+这一层是中文用户最容易被卡住的地方，也是本文最值得记住的部分。
+
+### 默认分词器不按中文词切分
+
+FTS5 的默认分词器是 `unicode61`，它按「非字母数字字符」切词。**连续的中文会被当成一个整词元**。用 `fts5vocab` 虚拟表可以直接看到它到底存了什么：
+
+```python
+con.execute("CREATE VIRTUAL TABLE t USING fts5(body, tokenize='unicode61')")
+con.execute("INSERT INTO t VALUES ('SQLite 的 FTS5 支持中文全文搜索')")
+con.execute("CREATE VIRTUAL TABLE v USING fts5vocab(t, 'row')")
+
+print([r[0] for r in con.execute("SELECT term FROM v")])
+# ['fts5', 'sqlite', '支持中文全文搜索', '的']
+```
+
+看到了吗？`支持中文全文搜索` 是一个词元。所以你查「全文」会**命中 0 条**——因为它不是词元，只是那个长词元的一部分。
+
+### 解法：`trigram` 分词器
+
+SQLite 3.34.0 起内置了 `trigram` 分词器，按 **3 个字符的滑动窗口**切词，中文子串就能被命中：
+
+```python
+print(sqlite3.sqlite_version)  # 确认 >= 3.34.0，Python 3.11 自带版本通常满足
+
+con.execute("CREATE VIRTUAL TABLE cn USING fts5(body, tokenize='trigram')")
+con.execute("INSERT INTO cn VALUES ('SQLite 的 FTS5 支持中文全文搜索')")
+con.execute("CREATE VIRTUAL TABLE cv USING fts5vocab(cn, 'row')")
+
+print([r[0] for r in con.execute("SELECT term FROM cv LIMIT 15")])
+# [' ft', ' 支持', ' 的 ', '5 支', 'e 的', 'fts', 'ite', 'lit',
+#  'qli', 's5 ', 'sql', 'te ', 'ts5', '中文全', '全文搜']
+
+print(con.execute(
+    "SELECT highlight(cn, 0, '【', '】') FROM cn WHERE cn MATCH ?",
+    ("全文搜索",),
+).fetchall())
+# [('SQLite 的 FTS5 支持中文【全文搜索】',)]
+```
+
+两种分词器的差别，一张图看清：
+
+![分词器对比](/images/fts-tokenizer-compare.png)
+
+### `trigram` 的边界：短查询怎么办
+
+`trigram` 只有在查询词**至少 3 个字符**时才走索引。词元是 3 字符滑窗，2 字中文（如「进阶」「教程」）查不出结果：
+
+```python
+con.execute("SELECT count(*) FROM cn WHERE cn MATCH ?", ("全文搜索",)).fetchone()  # (1,)
+con.execute("SELECT count(*) FROM cn WHERE cn MATCH ?", ("教程",)).fetchone()     # (0,)
+```
+
+短查询用 `LIKE` 兜底即可，数据量小时代价可以接受：
+
+```python
+keyword = "教程"
+if len(keyword) >= 3:
+    rows = con.execute("SELECT body FROM cn WHERE cn MATCH ?", (keyword,)).fetchall()
+else:
+    rows = con.execute(
+        "SELECT body FROM cn WHERE body LIKE ?", (f"%{keyword}%",)
+    ).fetchall()
+```
+
+另外，如果检索的主要是英文，用 `tokenize='porter unicode61'` 加上词干提取就够用；中文场景建议优先考虑 `trigram`。
+
+## 第四层：工程化——外部内容表与同步
+
+直接把文章正文存进 FTS5 虚拟表，会让索引表变成「唯一数据源」，管理起来别扭。更常见的做法是：**正文存在普通表，FTS5 只存索引**，两者用触发器保持同步。
+
+```python
+con.executescript("""
+CREATE TABLE articles(
+  id INTEGER PRIMARY KEY,
+  title TEXT NOT NULL,
+  body TEXT NOT NULL
+);
+
+-- content= 指定外部内容表；content_rowid= 指定主键映射
+CREATE VIRTUAL TABLE articles_fts USING fts5(
+  title, body,
+  content='articles',
+  content_rowid='id',
+  tokenize='trigram'
+);
+
+-- 插入同步
+CREATE TRIGGER articles_ai AFTER INSERT ON articles BEGIN
+  INSERT INTO articles_fts(rowid, title, body)
+  VALUES (new.id, new.title, new.body);
+END;
+
+-- 删除同步：先向 FTS5 写入一条 'delete' 指令
+CREATE TRIGGER articles_ad AFTER DELETE ON articles BEGIN
+  INSERT INTO articles_fts(articles_fts, rowid, title, body)
+  VALUES ('delete', old.id, old.title, old.body);
+END;
+
+-- 更新 = 删除旧值 + 插入新值
+CREATE TRIGGER articles_au AFTER UPDATE ON articles BEGIN
+  INSERT INTO articles_fts(articles_fts, rowid, title, body)
+  VALUES ('delete', old.id, old.title, old.body);
+  INSERT INTO articles_fts(rowid, title, body)
+  VALUES (new.id, new.title, new.body);
+END;
+""")
+```
+
+查询时把 FTS5 和原表连起来，拿到完整字段：
+
+```python
+rows = con.execute("""
+  SELECT a.id, a.title, snippet(articles_fts, 1, '[', ']', '…', 12) AS excerpt
+  FROM articles_fts f
+  JOIN articles a ON a.id = f.rowid
+  WHERE articles_fts MATCH ?
+  ORDER BY bm25(articles_fts)
+  LIMIT 20
+""", ("全文搜索",)).fetchall()
+```
+
+如果索引和原表不一致（比如历史数据迁移后），一条命令重建：
+
+```sql
+INSERT INTO articles_fts(articles_fts) VALUES('rebuild');
+```
+
+## 避坑清单
+
+| 坑点 | 表现 | 解决办法 |
+|------|------|----------|
+| 默认分词器查中文子串 | 查「全文」命中 0 条 | 建表时指定 `tokenize='trigram'` |
+| trigram 短查询 | 2 字中文查不出 | 短词走 `LIKE` 兜底，或改用支持中文分词的分词器 |
+| `MATCH` 写错对象 | 报 `unable to use function MATCH` | `MATCH` 左侧必须是虚拟表名，如 `docs MATCH ?` |
+| 查询词含特殊字符 | 报 `fts5: syntax error near ...` | 对用户输入的引号、冒号、括号做转义，或用参数绑定并包成短语 |
+| 外部内容表索引不同步 | 搜得到但取不到正文 | 检查三个触发器是否齐全，必要时执行 `rebuild` |
+| 更新走 `UPDATE articles_fts` | 索引重复、结果变多 | 只 `UPDATE` 原表，让触发器同步索引 |
+| 拿 `bm25()` 当正数用 | 排序方向反了 | `bm25()` 返回负值，`ORDER BY bm25(t)` 升序即最相关在前 |
+| 以为虚拟表能加普通索引 | 建索引无效 | FTS5 自己维护索引，额外建索引没有意义 |
+
+## 总结
+
+- **入门**：`CREATE VIRTUAL TABLE ... USING fts5()` + `MATCH`，十几行代码就能给应用加上搜索。
+- **进阶**：`bm25()` 排序、`highlight()` / `snippet()` 高亮摘要，让结果「像搜索」而不只是「像过滤」。
+- **中文**：默认 `unicode61` 会把连续中文当成一个整词元，用 `trigram` 才能命中中文子串；2 字短查询要 `LIKE` 兜底。
+- **工程**：正文存普通表、FTS5 只做索引，用 INSERT/DELETE/UPDATE 三个触发器同步，索引坏了执行 `rebuild`。
+
+SQLite 的全文搜索没有外部依赖，一个数据库文件就能搞定。下次想给小工具、笔记应用或本地文档加搜索，先想想 FTS5，别急着上 Elasticsearch。
+
+## 参考
+
+- SQLite 官方文档：https://www.sqlite.org/fts5.html
+- Python `sqlite3` 文档：https://docs.python.org/3/library/sqlite3.html

@@ -1,0 +1,38 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="460" viewBox="0 0 1200 460">
+  <rect width="1200" height="460" fill="#f8fafc"/>
+  <text x="40" y="54" font-size="30" font-weight="bold" fill="#0f172a" font-family="PingFang SC, Hiragino Sans GB, sans-serif">倒排索引：从「逐行扫描」到「按词查表」</text>
+
+  <text x="40" y="100" font-size="18" fill="#475569" font-family="PingFang SC, Hiragino Sans GB, sans-serif">原始文档</text>
+  <g font-family="PingFang SC, Hiragino Sans GB, sans-serif" font-size="18" fill="#0f172a">
+    <rect x="40" y="118" width="300" height="66" rx="10" fill="#ffffff" stroke="#cbd5e1"/>
+    <text x="58" y="146">文档 1：SQLite 全文搜索入门</text>
+    <text x="58" y="172" font-size="15" fill="#64748b">title + body 原始文本</text>
+    <rect x="40" y="196" width="300" height="66" rx="10" fill="#ffffff" stroke="#cbd5e1"/>
+    <text x="58" y="224">文档 2：FTS5 与 BM25 排序</text>
+    <text x="58" y="250" font-size="15" fill="#64748b">title + body 原始文本</text>
+    <rect x="40" y="274" width="300" height="66" rx="10" fill="#ffffff" stroke="#cbd5e1"/>
+    <text x="58" y="302">文档 3：中文搜索实践</text>
+    <text x="58" y="328" font-size="15" fill="#64748b">title + body 原始文本</text>
+  </g>
+
+  <path d="M350 235 L470 235" stroke="#2563eb" stroke-width="3" marker-end="url(#arrow)"/>
+  <text x="363" y="222" font-size="17" fill="#2563eb" font-family="PingFang SC, Hiragino Sans GB, sans-serif">分词</text>
+  <defs><marker id="arrow" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto"><path d="M0 0 L10 4 L0 8 z" fill="#2563eb"/></marker></defs>
+
+  <text x="500" y="100" font-size="18" fill="#475569" font-family="PingFang SC, Hiragino Sans GB, sans-serif">倒排索引（fts5 内部表）</text>
+  <rect x="500" y="118" width="640" height="240" rx="12" fill="#ffffff" stroke="#cbd5e1"/>
+  <rect x="500" y="118" width="640" height="46" rx="12" fill="#e0f2fe"/>
+  <text x="524" y="148" font-size="18" font-weight="bold" fill="#075985" font-family="PingFang SC, Hiragino Sans GB, sans-serif">词项 (term)</text>
+  <text x="840" y="148" font-size="18" font-weight="bold" fill="#075985" font-family="PingFang SC, Hiragino Sans GB, sans-serif">出现过的文档</text>
+  <g font-family="PingFang SC, Hiragino Sans GB, sans-serif" font-size="17" fill="#0f172a">
+    <text x="524" y="194">SQLite</text><text x="840" y="194">文档 1</text>
+    <text x="524" y="232">全文搜索</text><text x="840" y="232">文档 1、文档 3</text>
+    <text x="524" y="270">FTS5</text><text x="840" y="270">文档 2</text>
+    <text x="524" y="308">BM25</text><text x="840" y="308">文档 2</text>
+    <text x="524" y="346">中文</text><text x="840" y="346">文档 3</text>
+  </g>
+  <line x1="500" y1="164" x2="1140" y2="164" stroke="#cbd5e1"/>
+  <g stroke="#e2e8f0"><line x1="500" y1="212" x2="1140" y2="212"/><line x1="500" y1="250" x2="1140" y2="250"/><line x1="500" y1="288" x2="1140" y2="288"/><line x1="500" y1="326" x2="1140" y2="326"/></g>
+
+  <text x="40" y="420" font-size="18" fill="#475569" font-family="PingFang SC, Hiragino Sans GB, sans-serif">查询「全文搜索」时，直接取出对应文档列表并算相关性，不必把每篇文章从头扫到尾。</text>
+</svg>

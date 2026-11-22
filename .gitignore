@@ -11,6 +11,9 @@ dist/
 # WeChat publish ledger (per-server state, lives on the deploy host)
 .wechat-published.json
 
+# WorkBuddy local memory (not part of the site)
+.workbuddy/
+
 # macOS
 .DS_Store
 

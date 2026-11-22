@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="470" viewBox="0 0 1200 470">
+  <rect width="1200" height="470" fill="#f8fafc"/>
+  <text x="40" y="54" font-size="30" font-weight="bold" fill="#0f172a" font-family="PingFang SC, Hiragino Sans GB, sans-serif">中文搜索的分词坑：同一句话，两种词元</text>
+  <text x="40" y="92" font-size="18" fill="#475569" font-family="PingFang SC, Hiragino Sans GB, sans-serif">测试文本：SQLite 的 FTS5 支持中文全文搜索</text>
+
+  <g font-family="PingFang SC, Hiragino Sans GB, sans-serif">
+    <rect x="40" y="120" width="1120" height="140" rx="14" fill="#ffffff" stroke="#fca5a5"/>
+    <text x="64" y="156" font-size="20" font-weight="bold" fill="#b91c1c">默认 unicode61</text>
+    <text x="64" y="188" font-size="16" fill="#64748b">连着的中文被当成一个整词元：</text>
+    <rect x="64" y="202" width="96" height="34" rx="8" fill="#fef2f2" stroke="#fecaca"/><text x="112" y="225" font-size="16" fill="#7f1d1d" text-anchor="middle">sqlite</text>
+    <rect x="172" y="202" width="70" height="34" rx="8" fill="#fef2f2" stroke="#fecaca"/><text x="207" y="225" font-size="16" fill="#7f1d1d" text-anchor="middle">fts5</text>
+    <rect x="254" y="202" width="46" height="34" rx="8" fill="#fef2f2" stroke="#fecaca"/><text x="277" y="225" font-size="16" fill="#7f1d1d" text-anchor="middle">的</text>
+    <rect x="312" y="202" width="220" height="34" rx="8" fill="#fee2e2" stroke="#ef4444"/><text x="422" y="225" font-size="16" font-weight="bold" fill="#991b1b" text-anchor="middle">支持中文全文搜索</text>
+    <text x="560" y="225" font-size="17" fill="#b91c1c">→ 查「全文」命中 0 条</text>
+
+    <rect x="40" y="282" width="1120" height="140" rx="14" fill="#ffffff" stroke="#86efac"/>
+    <text x="64" y="318" font-size="20" font-weight="bold" fill="#15803d">trigram 分词器</text>
+    <text x="64" y="350" font-size="16" fill="#64748b">按 3 个字符滑窗切分，中文子串可被命中：</text>
+    <rect x="64" y="364" width="96" height="34" rx="8" fill="#f0fdf4" stroke="#bbf7d0"/><text x="112" y="387" font-size="16" fill="#14532d" text-anchor="middle">中文全</text>
+    <rect x="172" y="364" width="96" height="34" rx="8" fill="#f0fdf4" stroke="#bbf7d0"/><text x="220" y="387" font-size="16" fill="#14532d" text-anchor="middle">文全文</text>
+    <rect x="280" y="364" width="96" height="34" rx="8" fill="#dcfce7" stroke="#22c55e"/><text x="328" y="387" font-size="16" font-weight="bold" fill="#14532d" text-anchor="middle">全文搜</text>
+    <rect x="388" y="364" width="96" height="34" rx="8" fill="#dcfce7" stroke="#22c55e"/><text x="436" y="387" font-size="16" font-weight="bold" fill="#14532d" text-anchor="middle">文搜索</text>
+    <text x="520" y="387" font-size="17" fill="#15803d">→ 查「全文搜索」命中 1 条</text>
+
+    <text x="40" y="452" font-size="17" fill="#475569">注意：trigram 至少需要 3 个字符，2 字中文查询（如「进阶」）会返回空，短查询请用 LIKE 兜底。</text>
+  </g>
+</svg>
