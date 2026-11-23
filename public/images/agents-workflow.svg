@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="440" viewBox="0 0 1200 440">
+  <rect width="1200" height="440" fill="#f8fafc"/>
+  <text x="40" y="52" font-size="30" font-weight="bold" fill="#0f172a" font-family="PingFang SC, Hiragino Sans GB, sans-serif">从写好到用好：AGENTS.md 的落地闭环</text>
+
+  <g font-family="PingFang SC, Hiragino Sans GB, sans-serif">
+    <rect x="40" y="92" width="250" height="96" rx="12" fill="#ffffff" stroke="#93c5fd" stroke-width="2"/>
+    <text x="60" y="128" font-size="20" font-weight="bold" fill="#1e40af">① 写最小版本</text>
+    <text x="60" y="160" font-size="16" fill="#475569">先覆盖构建/测试/目录</text>
+
+    <rect x="330" y="92" width="250" height="96" rx="12" fill="#ffffff" stroke="#93c5fd" stroke-width="2"/>
+    <text x="350" y="128" font-size="20" font-weight="bold" fill="#1e40af">② 放在项目根目录</text>
+    <text x="350" y="160" font-size="16" fill="#475569">与代码一起提交、评审</text>
+
+    <rect x="620" y="92" width="250" height="96" rx="12" fill="#ffffff" stroke="#93c5fd" stroke-width="2"/>
+    <text x="640" y="128" font-size="20" font-weight="bold" fill="#1e40af">③ 让 AI 先读它</text>
+    <text x="640" y="160" font-size="16" fill="#475569">新会话第一句：先读 AGENTS.md</text>
+
+    <rect x="910" y="92" width="250" height="96" rx="12" fill="#ffffff" stroke="#93c5fd" stroke-width="2"/>
+    <text x="930" y="128" font-size="20" font-weight="bold" fill="#1e40af">④ 出错就补规则</text>
+    <text x="930" y="160" font-size="16" fill="#475569">把踩过的坑写成一条约定</text>
+
+    <path d="M290 140 L325 140" stroke="#2563eb" stroke-width="3" marker-end="url(#arrow2)"/>
+    <path d="M580 140 L615 140" stroke="#2563eb" stroke-width="3" marker-end="url(#arrow2)"/>
+    <path d="M870 140 L905 140" stroke="#2563eb" stroke-width="3" marker-end="url(#arrow2)"/>
+    <defs><marker id="arrow2" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto"><path d="M0 0 L10 4 L0 8 z" fill="#2563eb"/></marker></defs>
+
+    <text x="40" y="248" font-size="21" font-weight="bold" fill="#0f172a">用一份自检脚本，让「文档有没有写全」变成可验证的事：</text>
+    <rect x="40" y="270" width="1120" height="130" rx="10" fill="#1e293b"/>
+    <text x="64" y="304" font-size="16" fill="#a5f3fc" font-family="Menlo, monospace">required = {"构建": r"构建|build", "测试": r"测试|test",</text>
+    <text x="64" y="332" font-size="16" fill="#a5f3fc" font-family="Menlo, monospace">           "风格": r"约定|风格", "提交": r"提交|commit"}</text>
+    <text x="64" y="360" font-size="16" fill="#fde68a" font-family="Menlo, monospace">→ 缺哪项就打印 ❌，CI 里可用它拦住「空壳文档」</text>
+
+    <text x="40" y="426" font-size="17" fill="#475569">文档不是写一次就完：每次 AI 理解错一件事，就补一条规则，久而久之它就成了团队的隐性知识库。</text>
+  </g>
+</svg>
