@@ -1,0 +1,40 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="880" height="420" viewBox="0 0 880 420" font-family="PingFang SC, Hiragino Sans GB, sans-serif">
+  <rect width="880" height="420" fill="#f7f9fc"/>
+  <text x="440" y="42" text-anchor="middle" font-size="23" font-weight="bold" fill="#1a2b4a">Git Worktree：一个任务一条隔离分支</text>
+  <text x="440" y="68" text-anchor="middle" font-size="14" fill="#5a6b85">并行 agent 各改各的，直到你 review 后才合并</text>
+
+  <!-- 主仓库 -->
+  <rect x="350" y="92" width="180" height="56" rx="10" fill="#2f3b52" />
+  <text x="440" y="116" text-anchor="middle" font-size="16" font-weight="bold" fill="#fff">主仓库 main</text>
+  <text x="440" y="136" text-anchor="middle" font-size="12" fill="#c7d0e0">version = 1</text>
+
+  <!-- 连线 -->
+  <path d="M400 148 C360 190 210 190 170 230" fill="none" stroke="#9aa8bd" stroke-width="2"/>
+  <path d="M480 148 C520 190 670 190 710 230" fill="none" stroke="#9aa8bd" stroke-width="2"/>
+  <path d="M440 148 L440 230" fill="none" stroke="#9aa8bd" stroke-width="2"/>
+
+  <!-- 三个 worktree -->
+  <g>
+    <rect x="60" y="230" width="220" height="118" rx="10" fill="#fff" stroke="#3a7bd5" stroke-width="2"/>
+    <text x="170" y="258" text-anchor="middle" font-size="15" font-weight="bold" fill="#1b538f">worktree A · agent-a</text>
+    <text x="170" y="284" text-anchor="middle" font-size="13" fill="#3a4a63">version = 2</text>
+    <text x="170" y="306" text-anchor="middle" font-size="13" fill="#3a4a63">改配置</text>
+    <text x="170" y="334" text-anchor="middle" font-size="12" fill="#2e9e5b">✓ 独立提交 325ee12</text>
+  </g>
+  <g>
+    <rect x="330" y="230" width="220" height="118" rx="10" fill="#fff" stroke="#e07b39" stroke-width="2"/>
+    <text x="440" y="258" text-anchor="middle" font-size="15" font-weight="bold" fill="#a4501b">worktree B · agent-b</text>
+    <text x="440" y="284" text-anchor="middle" font-size="13" fill="#3a4a63">新增功能</text>
+    <text x="440" y="306" text-anchor="middle" font-size="13" fill="#3a4a63">同一份文件</text>
+    <text x="440" y="334" text-anchor="middle" font-size="12" fill="#2e9e5b">✓ 独立提交 6cee8a4</text>
+  </g>
+  <g>
+    <rect x="600" y="230" width="220" height="118" rx="10" fill="#fff" stroke="#2e9e5b" stroke-width="2"/>
+    <text x="710" y="258" text-anchor="middle" font-size="15" font-weight="bold" fill="#1c6b3a">worktree C · 第三条线</text>
+    <text x="710" y="284" text-anchor="middle" font-size="13" fill="#3a4a63">第三个 agent</text>
+    <text x="710" y="306" text-anchor="middle" font-size="13" fill="#3a4a63">或一次对比试验</text>
+    <text x="710" y="334" text-anchor="middle" font-size="12" fill="#8794a8">○ 还没合并</text>
+  </g>
+
+  <text x="440" y="386" text-anchor="middle" font-size="14" fill="#5a6b85">互不覆盖 → 你挑最好的那个 diff → 合并，其余丢弃</text>
+</svg>

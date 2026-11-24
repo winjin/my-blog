@@ -1,0 +1,50 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="880" height="420" viewBox="0 0 880 420" font-family="PingFang SC, Hiragino Sans GB, sans-serif">
+  <rect width="880" height="420" fill="#f7f9fc"/>
+  <text x="440" y="42" text-anchor="middle" font-size="23" font-weight="bold" fill="#1a2b4a">怎么选：按你的主要诉求对号入座</text>
+
+  <!-- 三个卡片 -->
+  <g>
+    <rect x="40" y="76" width="252" height="300" rx="14" fill="#fff" stroke="#e07b39" stroke-width="2"/>
+    <rect x="40" y="76" width="252" height="48" rx="14" fill="#ffe8d6"/>
+    <text x="166" y="107" text-anchor="middle" font-size="19" font-weight="bold" fill="#a4501b">T3 Code</text>
+    <text x="60" y="152" font-size="14" fill="#3a4a63">定位：统一控制台</text>
+    <text x="60" y="180" font-size="14" fill="#3a4a63">亮点：线程内切模型</text>
+    <text x="60" y="208" font-size="14" fill="#3a4a63">子代理委派</text>
+    <text x="60" y="236" font-size="14" fill="#3a4a63">手机远程审批</text>
+    <text x="60" y="264" font-size="14" fill="#3a4a63">零端口转发</text>
+    <line x1="60" y1="286" x2="272" y2="286" stroke="#eee"/>
+    <text x="60" y="312" font-size="13" font-weight="bold" fill="#a4501b">适合：想要一个面板</text>
+    <text x="60" y="336" font-size="13" fill="#8794a8">管所有已登录 CLI</text>
+    <text x="60" y="362" font-size="12" fill="#2e9e5b">MIT · ~5.7万星</text>
+  </g>
+  <g>
+    <rect x="314" y="76" width="252" height="300" rx="14" fill="#fff" stroke="#3a7bd5" stroke-width="2"/>
+    <rect x="314" y="76" width="252" height="48" rx="14" fill="#e3f0ff"/>
+    <text x="440" y="107" text-anchor="middle" font-size="19" font-weight="bold" fill="#1b538f">Paseo</text>
+    <text x="334" y="152" font-size="14" fill="#3a4a63">定位：跨设备 ADE</text>
+    <text x="334" y="180" font-size="14" fill="#3a4a63">亮点：TypeScript SDK</text>
+    <text x="334" y="208" font-size="14" fill="#3a4a63">全命令可脚本化</text>
+    <text x="334" y="236" font-size="14" fill="#3a4a63">无遥测 · E2E 中继</text>
+    <text x="334" y="264" font-size="14" fill="#3a4a63">GitHub/Slack 触发</text>
+    <line x1="334" y1="286" x2="546" y2="286" stroke="#eee"/>
+    <text x="334" y="312" font-size="13" font-weight="bold" fill="#1b538f">适合：要脚本/SDK</text>
+    <text x="334" y="336" font-size="13" fill="#8794a8">做自动化集成</text>
+    <text x="334" y="362" font-size="12" fill="#8794a8">自定义许可 · ~2.4万星</text>
+  </g>
+  <g>
+    <rect x="588" y="76" width="252" height="300" rx="14" fill="#fff" stroke="#2e9e5b" stroke-width="2"/>
+    <rect x="588" y="76" width="252" height="48" rx="14" fill="#e8f6ec"/>
+    <text x="714" y="107" text-anchor="middle" font-size="19" font-weight="bold" fill="#1c6b3a">Orca</text>
+    <text x="608" y="152" font-size="14" fill="#3a4a63">定位：并行试验台</text>
+    <text x="608" y="180" font-size="14" fill="#3a4a63">亮点：一个 prompt</text>
+    <text x="608" y="208" font-size="14" fill="#3a4a63">扇出到最多 5 个 agent</text>
+    <text x="608" y="236" font-size="14" fill="#3a4a63">对比择优合并</text>
+    <text x="608" y="264" font-size="14" fill="#3a4a63">Design Mode 点选 UI</text>
+    <line x1="608" y1="286" x2="820" y2="286" stroke="#eee"/>
+    <text x="608" y="312" font-size="13" font-weight="bold" fill="#1c6b3a">适合：要并行跑</text>
+    <text x="608" y="336" font-size="13" fill="#8794a8">多方案对比挑最优</text>
+    <text x="608" y="362" font-size="12" fill="#2e9e5b">MIT · ~9万星</text>
+  </g>
+
+  <text x="440" y="402" text-anchor="middle" font-size="13" fill="#8794a8">数据为 2026-11 前后公开信息，星标随时间变化；三者都需你自备已登录的 agent CLI</text>
+</svg>

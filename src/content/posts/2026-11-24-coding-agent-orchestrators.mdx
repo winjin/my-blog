@@ -1,0 +1,221 @@
+---
+title: "T3 Code、Paseo、Orca 横向对比：给 CLI 编码 Agent 装上「控制面」"
+description: "三款 2026 年爆火的开源工具都不造模型，而是把你已登录的 Claude Code、Codex 等 CLI 组织成可并行、可远程、可复用的工作流。本文从三层架构讲起，用三个实测可运行的示例带你理解适配器、worktree 隔离与选型决策，最后配三张原理图和避坑清单。"
+category: "tech"
+date: 2026-11-24
+tags: ["T3 Code", "Paseo", "Orca", "AI 编程", "Coding Agent", "Git Worktree", "工具对比"]
+draft: false
+---
+
+## 引言：你已经有好几个 Agent 了，为什么还要再来一个？
+
+用 AI 写代码的人，多半经历过这样的演进：先是 Claude Code，后来又订了 Codex，再装了 OpenCode 尝鲜。每个都能打，但很快会遇到新问题——
+
+- 想让两个 agent 同时改一个功能，结果它们在同一份工作区里互相覆盖；
+- agent 跑一个长任务卡在「是否批准这条命令」，你人在外面，只能干等；
+- 想从手机上看一眼进度、补一句指令，却发现只能守着那台机器；
+- 订阅了好几家，却要在多个终端、多个账号之间来回切。
+
+问题不在 agent 本身不够强，而在于**缺一层把它们组织起来的东西**。2026 年下半年，T3 Code、Paseo、Orca 三个开源项目几乎同时火起来，它们解决的正是同一件事：**给命令行里的编码 agent 套一个「控制面」**。
+
+这篇文章按四层走：先讲清它们在技术栈的哪一层，再用三个**我实际跑过、可运行**的示例带你吃透核心机制，然后逐项横评三款工具，最后给出避坑清单。
+
+![三款工具都在控制面这一层](/images/orch-three-layers.png)
+
+## 第一层：先搞清「控制面」是什么
+
+理解这三款工具，关键是把它拆成三层：
+
+| 层 | 角色 | 代表 | 谁付费 |
+|---|---|---|---|
+| ① 推理模型 | 真正思考的 LLM | Claude、GPT、Gemini | 你自己的订阅 |
+| ② CLI Harness | 把模型变成能读写文件、跑命令的 agent | Claude Code、Codex、OpenCode、Cursor、Copilot、Pi | 随模型订阅 |
+| ③ **控制面（本文主角）** | 调度多个 agent、隔离 worktree、远程审批、统一界面 | **T3 Code / Paseo / Orca** | 免费开源 |
+
+一句话：**它们都不造模型，也不转售 token**。它们调用你机器上**已经装好、已经登录**的 agent CLI，把散落的会话收拢到一个桌面端、网页端、手机端里，再加上并行隔离、远程审批、diff 审阅这些能力。
+
+这解释了三件重要的事：
+
+1. **你不用多花钱**——控制面免费，模型钱还是付给 Anthropic / OpenAI 等原厂；
+2. **你不需要重新配置**——agent 的订阅、skills、MCP 配置原样生效；
+3. **三款工具高度同质**——差别不在「能不能跑 agent」，而在并行策略、远程方式、可编程程度这些细节上。
+
+## 第二层：三个可运行示例，吃透核心机制
+
+理念讲完，用代码说话。下面三个示例我在 macOS 上**实际运行并验证了输出**（Node v22 / Git 2.39），你可以直接复制粘贴跑。
+
+### 示例 1：适配器——为什么「一个界面能管多种 agent」
+
+三款工具的第一个共同点，是给每家 CLI 写一个**适配器（adapter）**，把各自的输出格式归一成统一事件。下面这段把三个 agent 的输出压成同一种结构：
+
+```js
+// 01-adapter-registry.mjs
+const adapters = {
+  'claude-code': (line) => ({ tool: 'claude-code', kind: /Edit|Write/.test(line) ? 'edit' : 'text', raw: line }),
+  codex:          (line) => ({ tool: 'codex',          kind: /patch|apply/.test(line) ? 'edit' : 'text', raw: line }),
+  opencode:       (line) => ({ tool: 'opencode',       kind: /write|patch/.test(line) ? 'edit' : 'text', raw: line }),
+};
+function normalize(tool, stream) { return stream.map(adapters[tool]); }
+
+const samples = {
+  'claude-code': ['正在思考…', 'Edit src/auth.ts'],
+  codex:         ['分析中…', 'apply_patch 更新 session.ts'],
+  opencode:      ['读取文件', 'write src/middleware.ts'],
+};
+for (const [tool, lines] of Object.entries(samples)) {
+  const events = normalize(tool, lines);
+  console.log(`${tool}: 编辑类事件=${events.filter(e => e.kind === 'edit').length}`);
+}
+```
+
+实测输出：
+
+```text
+claude-code: 编辑类事件=1
+codex: 编辑类事件=1
+opencode: 编辑类事件=1
+```
+
+三家原始输出格式完全不同，归一后控制面只需要处理一种事件结构。真实项目里这个结构会复杂得多（带 thread_id、权限级别、diff 等），但**思路一模一样**——这就是 T3 Code 的 provider adapter、Paseo 的 provider wrapper、Orca 的「任何 CLI 都能接」背后的原理。
+
+### 示例 2：Git Worktree——并行 agent 不打架的底座
+
+第二个共同点，是都靠 **git worktree** 做隔离。同一个 prompt 分给多个 agent，各自在独立分支上改同一份文件，互不覆盖。这段脚本实测了全过程：
+
+```bash
+# 02-worktree-isolation.sh
+set -e
+ROOT=$(mktemp -d); cd "$ROOT"
+git init -q && git config user.email demo@test && git config user.name demo
+echo "version = 1" > config.txt
+git add . && git commit -qm init
+
+git worktree add -q -b agent-a wt-a
+git worktree add -q -b agent-b wt-b
+(cd wt-a && echo "version = 2 (agent A 改的)" > config.txt && git commit -qam "A: bump version")
+(cd wt-b && echo "新增功能 by agent B" >> config.txt && git commit -qam "B: add feature")
+
+echo "主仓库: $(cat config.txt)"
+echo "agent-a: $(cat wt-a/config.txt)"
+git worktree list
+rm -rf "$ROOT"
+```
+
+实测输出（节选）：
+
+```text
+主仓库:  version = 1
+agent-a: version = 2 (agent A 改的)
+…/wt-a  325ee12 [agent-a]
+…/wt-b  6cee8a4 [agent-b]
+```
+
+主仓库纹丝不动，两个 agent 各自拿到完整独立的工作副本和提交。**这正是 Orca「一个 prompt 扇出到 5 个 agent」能成立的前提**，也是 T3 Code、Paseo 每条 thread 独立分支的底层机制。你 review 完挑一个合并，其余丢弃，仓库始终干净。
+
+![worktree 隔离示意](/images/orch-worktree.png)
+
+### 示例 3：把「选型」写成可运行的决策函数
+
+既然三款工具功能重叠，怎么选？我把它写成一个按场景打分的小函数，让结论可复现：
+
+```js
+// 03-choose.mjs
+const tools = {
+  'T3 Code': { parallel: 1, mobile: 3, sdk: 2 },
+  'Paseo':   { parallel: 2, mobile: 3, sdk: 3 },
+  'Orca':    { parallel: 3, mobile: 3, sdk: 2 },
+};
+function recommend(w) {
+  return Object.entries(tools)
+    .map(([name, t]) => ({ name, score: t.parallel*w.parallel + t.mobile*w.mobile + t.sdk*w.sdk }))
+    .sort((a, b) => b.score - a.score);
+}
+const scenes = {
+  '并行跑多个 agent 对比择优': { parallel: 3, mobile: 1, sdk: 1 },
+  '脚本 / SDK 做自动化集成':   { parallel: 1, mobile: 1, sdk: 3 },
+};
+for (const [scene, w] of Object.entries(scenes))
+  console.log(scene, '->', recommend(w).map(r => `${r.name}(${r.score})`).join(' > '));
+```
+
+实测输出：
+
+```text
+并行跑多个 agent 对比择优 -> Orca(14) > Paseo(12) > T3 Code(8)
+脚本 / SDK 做自动化集成   -> Paseo(14) > Orca(12) > T3 Code(10)
+```
+
+分数只是把「谁更强项」量化出来，帮你建立直觉；真实选型还要看下面这些细节。
+
+## 第三层：三款工具逐项横评
+
+### T3 Code：统一控制台，线程内切模型
+
+由 Theo 团队（pingdotgg）开源，MIT 许可，2026 年 11 月 GitHub 约 5.7 万星。它把自己定位成**面向本机 agent 的控制平面**——桌面端、网页端、iOS/Android App 共用一套线程模型。
+
+几个鲜明特点：
+
+- **线程内切换模型**：一个 thread 先用 Claude 起步，卡住了直接交给 Codex 接着做，不用重贴上下文；主 thread 还能派生多个子 agent 并行干活；
+- **远程审批**：agent 跑到 `pnpm db:migrate` 需要确认时，手机弹出「允许一次 / 本次会话允许 / 拒绝」；
+- **零端口转发**：`t3 up` 一条命令搞定远程连接，走 T3 Connect（Cloudflare 隧道）、局域网或 Tailscale，不用在路由器开端口；
+- **一键出 PR**：每个线程隔离在独立 worktree，review 完一键 commit、push、开 GitHub PR。
+
+适合：想要一个面板统管所有已登录 CLI、经常在手机上审批的人。
+
+### Paseo：跨设备 ADE，可编程程度最高
+
+同样开源，但用自定义许可（非标准 OSI 协议），约 2.4 万星。它跑一个本地 daemon（默认 6767 端口），桌面、移动、网页、CLI 都是这个 daemon 的客户端。
+
+特点：
+
+- **Everything scriptable**：`paseo run "实现登录"`、`paseo ls`、`paseo attach`、`paseo send`，所有界面操作都有对应命令；还提供 TypeScript SDK，能写自动化服务；
+- **隐私优先**：无遥测、无强制登录；远程用端到端加密中继，Paseo 自己也读不到你的流量；
+- **Paseo Hub**：可选服务，给 agent 加上来自 GitHub / Slack / Discord 的触发器，适合团队协作；
+- **技能系统**：`/paseo-handoff` 在 agent 间交接、`/paseo-committee` 组两个不同模型的「委员会」做根因分析。
+
+适合：想把 agent 编排进自己自动化流水线、看重隐私和脚本能力的开发者与团队。
+
+### Orca：并行试验台，一个 prompt 跑五个方案
+
+Stably AI 出品（YC 支持），MIT 许可，约 9 万星，是三者里星标最高的。它是**桌面优先的 ADE**，核心赌注是「并行」：
+
+- **并行 worktree**：一个 prompt 扇出到最多 5 个 agent（Claude Code、Codex、OpenCode、Pi 等），各自独立 worktree，跑完横向对比、合并最优、其余丢弃；
+- **Design Mode**：内置 Chromium 窗口里点选任意 UI 元素，直接把它的 HTML、CSS 和截图送进 agent prompt——前端改样式的大杀器；
+- **审阅闭环**：diff 行级批注，反馈直接回灌给 agent 继续改；GitHub/Linear 集成，从任务直接开 worktree；
+- **移动伴侣 + SSH worktree**：手机上看状态、收完成通知、补指令；重活丢到远程机器跑。
+
+适合：日常重度使用 agent、经常想「同一个任务多试几种方案再挑」的人，尤其是前端。
+
+![按诉求对号入座](/images/orch-decision.png)
+
+## 第四层：一张表看懂差异
+
+| 维度 | T3 Code | Paseo | Orca |
+|---|---|---|---|
+| 核心定位 | 统一控制平面 | 跨设备 ADE + 可编程 | 并行试验 / 对比择优 |
+| 形态 | 桌面 / 网页 / 移动 + `t3` CLI | daemon + 桌面 / 移动 / 网页 / CLI + SDK | 桌面为主 + 移动伴侣 + `orca` CLI |
+| 并行策略 | 线程内子代理委派 | 并行任务 + 编排技能 | 一 prompt 扇出最多 5 个 agent |
+| 远程方式 | T3 Connect / LAN / Tailscale | E2E 加密中继 / LAN / 自建隧道 | 移动伴侣 + SSH worktree |
+| 突出能力 | 线程内切模型、手机审批 | 脚本化、SDK、Hub 触发器、无遥测 | Design Mode、diff 批注、Usage 看板 |
+| 许可 | MIT | 自定义许可 | MIT |
+| 大致热度 | ~5.7 万星 | ~2.4 万星 | ~9 万星 |
+| 一句话 | 管得多 | 接得广 | 跑得并行 |
+
+> 星标为 2026 年 11 月前后公开信息，随时间变化；版本迭代很快，安装前建议查官网最新文档。
+
+## 避坑清单
+
+1. **别指望它自带模型**。三款都要求你先装好并登录至少一个 agent CLI（如 `claude auth login` / `codex login`），否则装了控制面也跑不动。
+2. **并行≠省额度**。同时跑五个 agent，五个订阅/额度一起消耗，只是因为你做得更多，不是更省。
+3. **权限默认偏宽松**。多款工具默认允许较多自动操作，涉及数据库迁移、删除、部署时，务必开启「逐条审批」或新设备确认。
+4. **worktree 用完要清理**。对比完记得删掉落选分支和 worktree（`git worktree remove`），否则仓库里会堆积一堆僵尸分支。
+5. **看清许可差异**。T3 Code、Orca 是 MIT；Paseo 是自定义许可，团队/商业场景落地前先读清楚条款。
+6. **远程连接按需选**。能用局域网/Tailscale 就别暴露端口；用中继确认端到端加密开着。
+7. **别把控制面当 review 的替代品**。它只是让你更方便地看 diff，判断代码对不对仍然是你自己的活。
+8. **版本迭代极快**。这三个项目几乎天天发版，本文数字与命令以写作时为准，落地请以官网/仓库最新文档为准。
+
+## 小结
+
+三款工具其实是同一道题的三种解法：**把「单个 agent 单打独斗」升级成「多 agent 可控并行」**。想统一面板、手机随时审批，选 T3 Code；想要脚本化、SDK 集成和隐私，选 Paseo；想让一个任务并行跑五个方案挑最优，选 Orca。它们不冲突，很多人干脆组合使用。
+
+而无论选哪个，真正值钱的不是工具本身，而是你为并行任务写清楚的那句**验收标准**和**验证命令**——工具负责把活并行铺开，质量仍由你把关。
