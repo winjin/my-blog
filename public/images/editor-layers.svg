@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="880" height="500" viewBox="0 0 880 500" font-family="PingFang SC, Hiragino Sans GB, sans-serif">
+  <rect width="880" height="500" fill="#f7f9fc"/>
+  <text x="440" y="42" text-anchor="middle" font-size="24" font-weight="bold" fill="#1a2b4a">一个代码编辑器的六层架构</text>
+  <text x="440" y="68" text-anchor="middle" font-size="14" fill="#5a6b85">越往上越贴用户，越往下越贴文本与操作系统</text>
+
+  <g font-size="14">
+    <rect x="70" y="92" width="740" height="56" rx="10" fill="#fde8e8" stroke="#d9534f" stroke-width="2"/>
+    <text x="88" y="116" font-size="15" font-weight="bold" fill="#a32d2a">⑥ AI Agent 层</text>
+    <text x="88" y="137" fill="#8b2b28">补全 · 对话 · 工具调用 · 多文件编辑 · 测试闭环（可选，但已成标配）</text>
+
+    <rect x="70" y="158" width="740" height="56" rx="10" fill="#fff1dc" stroke="#e08a2e" stroke-width="2"/>
+    <text x="88" y="182" font-size="15" font-weight="bold" fill="#9a5a10">⑤ 扩展 / 插件层</text>
+    <text x="88" y="203" fill="#8a5312">命令面板 · 快捷键 · 主题 · LSP 客户端 · 第三方插件 API</text>
+
+    <rect x="70" y="224" width="740" height="56" rx="10" fill="#e9f3ff" stroke="#3a7bd5" stroke-width="2"/>
+    <text x="88" y="248" font-size="15" font-weight="bold" fill="#1b538f">④ 视图 / 交互层</text>
+    <text x="88" y="269" fill="#1b538f">渲染 · 语法着色 · 光标选区 · 多光标 · 分屏 · Minimap · 虚拟滚动</text>
+
+    <rect x="70" y="290" width="740" height="56" rx="10" fill="#e8f6ec" stroke="#2e9e5b" stroke-width="2"/>
+    <text x="88" y="314" font-size="15" font-weight="bold" fill="#1c6b3a">③ 语言智能层</text>
+    <text x="88" y="335" fill="#1c6b3a">词法/语法分析 · 诊断 · 补全 · 跳转定义 · 重构 · 格式化（LSP 协议）</text>
+
+    <rect x="70" y="356" width="740" height="56" rx="10" fill="#efecfb" stroke="#7a5cc4" stroke-width="2"/>
+    <text x="88" y="380" font-size="15" font-weight="bold" fill="#503894">② 文档模型层</text>
+    <text x="88" y="401" fill="#4b3587">Piece Table / Rope · 行列映射 · 撤销栈 · 标记（marker）· 事务</text>
+
+    <rect x="70" y="422" width="740" height="56" rx="10" fill="#eceff4" stroke="#6b7a90" stroke-width="2"/>
+    <text x="88" y="446" font-size="15" font-weight="bold" fill="#3c4757">① 平台 / I/O 层</text>
+    <text x="88" y="467" fill="#3c4757">文件系统 · 编码 · 进程/终端 · 网络 · 配置持久化 · 事件循环</text>
+  </g>
+</svg>

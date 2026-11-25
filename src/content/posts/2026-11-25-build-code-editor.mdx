@@ -1,0 +1,398 @@
+---
+title: "写一个代码编辑器，究竟要做些什么：从文本缓冲区到 AI Agent 的完整地图"
+description: "代码编辑器看似只是一个能高亮的输入框，实则横跨文本模型、语言服务、渲染交互、插件扩展与 AI Agent 五重世界。本文自底向上拆成六层架构，用三个我实际跑通的可运行示例（Piece Table、词法高亮、ReAct Agent）讲透核心机制，配三张原理图，最后给出一份避坑清单。"
+category: "tech"
+date: 2026-11-25
+tags: ["代码编辑器", "编译器原理", "LSP", "Piece Table", "AI Agent", "架构设计", "前端"]
+draft: false
+---
+
+## 引言：你以为它是输入框，其实它是一个小型操作系统
+
+「写一个代码编辑器」听上去很简单：放一个 `<textarea>`，套个黑色背景，再把关键字染成蓝色，不就成了？
+
+如果你真这么做过，很快会撞上一连串问题：
+
+- 用户输入到第 10 万行时开始卡顿，光标移动像幻灯片；
+- 按 `Ctrl+Z` 撤销，结果把别人的改动也一起撤掉了；
+- 想加个「跳转到定义」，发现得先理解整门语言的语法树；
+- 接上 AI 补全后，模型改完文件把用户的未保存内容覆盖了。
+
+这些问题没有一个是「UI 层面」的。一个能用的代码编辑器，本质是**一台围绕文本运转的小型操作系统**：有内存管理（文本缓冲区）、有进程调度（异步语言服务）、有文件系统（工程模型）、有权限系统（AI 工具调用），还有一个极其挑剔的用户——程序员本人。
+
+这篇文章按六层架构自底向上讲：每一层解决什么问题、有哪些技术选型、坑在哪里。中间穿插三个**我在 macOS 上实际运行验证过**的示例，你可以直接复制到 Node 环境里跑。最后专门讲现在最热的 AI Agent 功能——它并不是凭空冒出来的第六层，而是前五层能力的集大成者。
+
+![一个代码编辑器的六层架构](/images/editor-layers.png)
+
+## 第一层：平台 / I/O——最不起眼，最先翻车
+
+最底层管的是「编辑器如何和外部世界打交道」：
+
+| 职责 | 具体内容 | 常见坑 |
+|---|---|---|
+| 文件读写 | 路径规范化、原子保存、编码探测（UTF-8 / BOM / GBK） | 直接覆盖写，断电后半截文件 |
+| 行尾与编码 | CRLF vs LF、混合行尾、Unicode 代理对 | 按字节切片把中文切成乱码 |
+| 进程 / 终端 | 启动编译、运行测试、PTY 终端 | 子进程泄漏、僵尸进程 |
+| 配置持久化 | 设置、快捷键、工作区状态 | 多窗口同时写配置互相覆盖 |
+| 事件循环 | 用户输入、文件监听、网络响应的调度 | 主线程被大文件解析阻塞 |
+
+这一层的黄金法则只有一条：**永远不要在 UI 线程做重活**。打开一个大日志、搜索整个仓库、解析一棵巨大的语法树，全部丢到 Worker 或独立进程里。VS Code 之所以能把响应保持在毫秒级，靠的就是把文件索引、语言服务、扩展宿主统统拆成独立进程。
+
+## 第二层：文档模型——整个编辑器的地基
+
+这一层决定「文本在内存里怎么存」。新手最直觉的做法是存成一个大字符串，每次编辑就用 `slice + concat` 生成新字符串。小规模够用，但两个致命问题：
+
+1. **性能**：插入一个字符要复制整份文本，10MB 文件每次敲键都复制 10MB；
+2. **撤销**：保存整份字符串的快照，内存爆炸。
+
+工业界的答案是 **Piece Table（片段表）** 或它的近亲 **Rope（绳）**。核心思想反直觉但极其优雅：
+
+> **原始文本永远不改，新输入全部追加到一个只增不删的缓冲区；文档 = 一串指向两个缓冲区的「片段」拼接。**
+
+插入变成「切片段 + 插指针」，删除变成「移除或裁剪片段」，撤销只要存一份片段列表的快照——都是 O(片段数) 的操作，和文件大小无关。
+
+### 示例 1：一个能跑的 Piece Table
+
+下面这个实现不到 80 行，支持插入、删除、撤销。我在 Node v22 下实测，输出贴在代码后面。
+
+```js
+class Piece {
+  constructor(buffer, start, length) {
+    this.buffer = buffer;   // 'origin' 原始缓冲区 或 'add' 追加缓冲区
+    this.start = start;
+    this.length = length;
+  }
+}
+
+class PieceTable {
+  constructor(text = '') {
+    this.origin = text;
+    this.add = '';
+    this.pieces = text ? [new Piece('origin', 0, text.length)] : [];
+    this.history = [];
+  }
+
+  snapshot() {
+    this.history.push(this.pieces.map(p => new Piece(p.buffer, p.start, p.length)));
+  }
+
+  // 逻辑位置 pos → [第几块, 块内偏移]
+  locate(pos) {
+    let acc = 0;
+    for (let i = 0; i < this.pieces.length; i++) {
+      const end = acc + this.pieces[i].length;
+      if (pos <= end) return [i, pos - acc];
+      acc = end;
+    }
+    return [this.pieces.length - 1, this.pieces.at(-1)?.length ?? 0];
+  }
+
+  insert(pos, text) {
+    if (!text) return;
+    this.snapshot();
+    const addStart = this.add.length;
+    this.add += text;
+    if (!this.pieces.length) {
+      this.pieces.push(new Piece('add', addStart, text.length));
+      return;
+    }
+    const [i, off] = this.locate(pos);
+    const p = this.pieces[i];
+    const left  = new Piece(p.buffer, p.start, off);
+    const right = new Piece(p.buffer, p.start + off, p.length - off);
+    const inserted = new Piece('add', addStart, text.length);
+    const parts = [];
+    if (left.length)  parts.push(left);
+    parts.push(inserted);
+    if (right.length) parts.push(right);
+    this.pieces.splice(i, 1, ...parts);
+  }
+
+  erase(pos, count) {
+    if (count <= 0) return;
+    this.snapshot();
+    const end = pos + count;
+    const next = [];
+    let acc = 0;
+    for (const p of this.pieces) {
+      const start = acc, pieceEnd = acc + p.length;
+      acc = pieceEnd;
+      if (pieceEnd <= pos || start >= end) { next.push(p); continue; } // 区间外
+      if (start < pos) next.push(new Piece(p.buffer, p.start, pos - start)); // 留左
+      if (pieceEnd > end) {
+        const skip = Math.max(pos, start) - start;
+        next.push(new Piece(
+          p.buffer,
+          p.start + skip + (end - Math.max(pos, start)),
+          pieceEnd - end
+        )); // 留右
+      }
+    }
+    this.pieces = next;
+  }
+
+  toString() {
+    return this.pieces
+      .map(p => (p.buffer === 'origin' ? this.origin : this.add)
+        .slice(p.start, p.start + p.length))
+      .join('');
+  }
+
+  undo() {
+    const prev = this.history.pop();
+    if (prev) this.pieces = prev;
+  }
+}
+
+// —— 实测 ——
+const doc = new PieceTable('hello world');
+doc.insert(5, ',');
+console.log('插入后:', doc.toString());                       // hello, world
+doc.insert(12, '!');
+console.log('再插入:', doc.toString());                       // hello, world!
+doc.erase(5, 1);
+console.log('删除后:', doc.toString());                       // hello world!
+doc.undo();
+console.log('撤销后:', doc.toString());                       // hello, world!
+doc.erase(0, 6);
+console.log('删开头:', JSON.stringify(doc.toString()));        // " world!"
+```
+
+实测输出：
+
+```text
+插入后: hello, world
+再插入: hello, world!
+删除后: hello world!
+撤销后: hello, world!
+删开头: " world!"
+```
+
+真实的编辑器（VS Code）在这个基础上还加了**平衡树**（把 piece 序列组织成树，定位从 O(n) 降到 O(log n)）、**行列映射缓存**（快速把字符偏移换算成第几行第几列）、以及**CRDT**（多人协同编辑时解决冲突）。但思想是一样的。
+
+![Piece Table 工作原理](/images/editor-piece-table.png)
+
+> 顺带一提：撤销栈不要只存「正向操作」，更常见的做法是存**逆向操作**（inverse operation）。这样重做（Redo）只要反向执行，不用维护两份全量快照。
+
+## 第三层：语言智能——从「显示文本」到「理解代码」
+
+文档模型解决了「文本怎么存」，但程序员要的远不止文本：
+
+- **语法高亮**：给不同 token 上色；
+- **诊断（Diagnostics）**：波浪线标出错误和警告；
+- **补全（Completion）**：敲 `.` 之后列出方法；
+- **跳转定义 / 查找引用**：`F12` 跳到函数出处；
+- **重构（Refactor）**：重命名变量时所有引用一起改；
+- **格式化（Formatting）**：一键美化代码；
+- **Hover 提示**：鼠标悬停显示文档。
+
+这里有个关键分水岭：**编辑器本身不该懂每一门语言**。如果每支持一种语言就把解析器写进编辑器核心，那支持 50 种语言就是 50 份维护噩梦。
+
+业界的解法是 **LSP（Language Server Protocol，语言服务器协议）**：编辑器做一个通用客户端，每门语言有一个独立运行的「语言服务器」进程，双方用 JSON-RPC 通信。编辑器发 `textDocument/completion` 请求，服务器回补全列表；发 `textDocument/definition`，服务器回定义位置。VS Code 能用同一套 UI 支持几百种语言，全靠这个协议。
+
+### 示例 2：词法高亮 tokenizer
+
+高亮是语言智能里最基础也最快的一环——它不需要完整语法树，只要**词法分析**（把字符流切成 token）。下面这个 tokenizer 用一组正则按顺序匹配，我在 Node v22 下实测能正确切出注释、关键字、数字、标识符和标点。
+
+```js
+const TOKEN_KINDS = [
+  ['comment', /^\/\/[^\n]*/],
+  ['string',  /^`(?:[^`\\]|\\.)*`|^"(?:[^"\\]|\\.)*"|^'(?:[^'\\]|\\.)*'/],
+  ['keyword', /^\b(?:const|let|var|function|return|if|else|for|while|import|from|export|class|new)\b/],
+  ['number',  /^\b\d+(?:\.\d+)?\b/],
+  ['ident',   /^[A-Za-z_$][\w$]*/],
+  ['space',   /^\s+/],
+  ['punct',   /^[^\s\w$]/],
+];
+
+function tokenize(src) {
+  const out = [];
+  let rest = src, line = 1, col = 0;
+  while (rest.length) {
+    let hit = null;
+    for (const [kind, re] of TOKEN_KINDS) {
+      const m = re.exec(rest);
+      if (m) { hit = { kind, text: m[0] }; break; }
+    }
+    if (!hit) { rest = rest.slice(1); col++; continue; }
+    if (hit.kind !== 'space') out.push({ ...hit, line, col });
+    const lines = hit.text.split('\n');
+    if (lines.length > 1) { line += lines.length - 1; col = lines.at(-1).length; }
+    else col += hit.text.length;
+    rest = rest.slice(hit.text.length);
+  }
+  return out;
+}
+
+const code = `// 一句话注释
+const n = 42;
+function add(a) { return a + n; }`;
+
+const tokens = tokenize(code);
+console.log('token 总数:', tokens.length);
+console.log('前 8 个:', tokens.slice(0, 8).map(t => `${t.kind}:${t.text.trim()}`).join(' | '));
+console.log('关键字:', tokens.filter(t => t.kind === 'keyword').map(t => t.text).join(','));
+```
+
+实测输出：
+
+```text
+token 总数: 18
+前 8 个: comment:// 一句话注释 | keyword:const | ident:n | punct:= | number:42 | punct:; | keyword:function | ident:add
+关键字: const,function,return
+```
+
+> 注意正则的**顺序**：`keyword` 必须排在 `ident` 前面，否则 `const` 会先被当成普通标识符吃掉。这类「规则优先级」问题是词法高亮最常见的坑。
+
+真实编辑器会用 **Tree-sitter** 这类增量解析框架代替手写正则——它能为不完整的、正在编辑中的代码构建容错语法树，并在每次输入时只重算受影响的子树。但 tokenizer 的思路是相通的：**先分类，再上色**。
+
+## 第四层：视图 / 交互——用户真正看到的部分
+
+这一层把文档模型渲染成屏幕上的像素，并处理所有交互：
+
+- **文本渲染**：等宽字体、字距、行高；
+- **语法着色**：把第三层的 token 映射成颜色主题；
+- **光标与选区**：闪烁光标、矩形选区、列选择；
+- **多光标**：`Alt+Click` 多处同时编辑；
+- **虚拟滚动**：只渲染可视区域的行，10 万行文件也不卡；
+- **分屏与标签页**：多个编辑器实例共享文档；
+- **Minimap**：右侧缩略图；
+- **Decorations**：波浪线、断点标记、AI 补全的灰色幽灵文字。
+
+一个容易忽略的细节：**光标位置有两种表示**——字符偏移（适合文档模型）和行列坐标（适合渲染显示）。二者转换需要遍历文本计算换行，大文件里频繁转换会拖慢速度，所以成熟编辑器都会缓存一份「行起始偏移表」。
+
+另一个细节：**输入法组合（IME）**。中文、日文输入时，用户敲的字母还没确认成汉字，此时如果编辑器抢先处理键盘事件，就会打乱输入。正确做法是监听 `compositionstart` / `compositionend` 事件，组合期间不干预。这是国内用户最容易踩、也最影响体验的坑之一。
+
+## 第五层：扩展 / 插件——从工具到平台
+
+当一个编辑器有了稳定的文档模型、语言服务和视图层，就该考虑开放扩展了。这一层包括：
+
+| 扩展点 | 说明 | 代表实现 |
+|---|---|---|
+| 命令面板 | `Ctrl+Shift+P` 全局命令入口 | VS Code Commands API |
+| 快捷键系统 | 按键序列 → 命令，支持用户自定义键位 | keybinding resolver |
+| 主题系统 | 颜色、图标、字体的可替换方案 | TextMate / CSS 变量 |
+| 插件 API | 第三方读取文档、注册命令、贡献 UI | Extension Host |
+| 语言客户端 | 把 LSP 服务器接进编辑器 | vscode-languageclient |
+
+**隔离是这一层的关键词**。插件必须跑在独立进程（Extension Host）里，崩溃了不能拖垮主界面；插件的 CPU 和内存要有配额，防止一个写错的插件让整个编辑器卡死。VS Code 的扩展宿主就是一个独立 Node 进程，通过 IPC 和主进程通信。
+
+## 第六层：AI Agent——把前五层变成「可被调用的工具」
+
+现在来到最热的部分。很多人以为「给编辑器加 AI」就是接一个补全 API，在光标处显示灰色幽灵文字。那只是最浅的一层。
+
+真正的 AI Agent 是：**让模型能像程序员一样，观察编辑器状态、思考、然后调用编辑器的能力去干活**。它把前五层全部封装成工具：
+
+| Agent 工具 | 调用的底层能力 |
+|---|---|
+| 读文件 / 列目录 | 平台 I/O 层 |
+| 搜索代码 | 语言服务 + 索引 |
+| 编辑文件 / 打补丁 | 文档模型层（走 Piece Table，保证撤销可用） |
+| 跑测试 / 编译 | 进程层 |
+| 获取诊断 | LSP 层 |
+| 解释选中代码 | 视图层提供的上下文 |
+
+Agent 的工作循环是 **ReAct**（Reason + Act）：观察 → 思考 → 调工具 → 拿到结果 → 再思考……直到目标达成或触发终止条件。
+
+![AI Agent 的 ReAct 循环](/images/editor-agent-loop.png)
+
+### 示例 3：一个能跑的 ReAct 循环
+
+下面用纯函数模拟模型（真实场景里由 LLM 输出 function_call），演示 Agent 如何一步步调用工具完成任务。我在 Node v22 下实测通过。
+
+```js
+const tools = {
+  readFile: (path) => `内容(${path}): const x = 1;`,
+  grep: (kw) => `匹配 ${kw}: src/a.ts:3`,
+  editFile: (path, patch) => `已打补丁 ${path}: ${patch}`,
+  runTests: () => '测试结果: 8 passed, 0 failed',
+};
+
+// 模拟 LLM：每轮根据历史挑一个工具（真实场景由模型输出 function_call）
+function fakeModel(history, goal) {
+  const n = history.length;
+  if (/报错|失败/.test(history.at(-1) || '')) return { thought: '先读源码', tool: 'readFile', args: ['src/a.ts'] };
+  if (n === 0) return { thought: '先搜一下相关位置', tool: 'grep', args: ['x = 1'] };
+  if (n === 1) return { thought: '定位到了，改掉它', tool: 'editFile', args: ['src/a.ts', 'x=1 → x=2'] };
+  if (n === 2) return { thought: '跑测试确认', tool: 'runTests', args: [] };
+  return { thought: '目标已达成', tool: null, answer: `已完成：${goal}，测试通过` };
+}
+
+function runAgent(goal, maxSteps = 8) {
+  const history = [];
+  console.log(`任务：${goal}`);
+  for (let step = 0; step < maxSteps; step++) {
+    const decision = fakeModel(history, goal);
+    console.log(`  [${step + 1}] 💭 ${decision.thought}`);
+    if (!decision.tool) { console.log(`  ✅ ${decision.answer}`); return decision.answer; }
+    const result = tools[decision.tool](...decision.args);
+    console.log(`      🔧 ${decision.tool}(${decision.args.join(', ')}) → ${result}`);
+    history.push(result);
+  }
+  console.log('  ⚠️ 达到最大步数');
+}
+
+runAgent('把变量 x 从 1 改成 2');
+```
+
+实测输出：
+
+```text
+任务：把变量 x 从 1 改成 2
+  [1] 💭 先搜一下相关位置
+      🔧 grep(x = 1) → 匹配 x = 1: src/a.ts:3
+  [2] 💭 定位到了，改掉它
+      🔧 editFile(src/a.ts, x=1 → x=2) → 已打补丁 src/a.ts: x=1 → x=2
+  [3] 💭 跑测试确认
+      🔧 runTests() → 测试结果: 8 passed, 0 failed
+  [4] 💭 目标已达成
+  ✅ 已完成：把变量 x 从 1 改成 2，测试通过
+```
+
+#### Agent 特有的三个工程难题
+
+1. **上下文工程**：编辑器状态（打开的文件、光标位置、选中内容、诊断信息、最近 diff）要精准地喂给模型。塞太多浪费 token 还分散注意力，塞太少模型就瞎猜。好的实现会做**上下文排序与压缩**，把最相关的代码片段放前面。
+2. **权限与沙箱**：Agent 能读文件、跑命令，就有风险。必须做**分级授权**——读文件默认允许，改文件要确认，执行 shell 命令要显式批准，删除文件要二次确认。
+3. **可回滚**：所有 AI 改动必须走文档模型的撤销栈，并且以 **diff 形式先给人审阅**。用户一键接受或拒绝，绝不能让模型悄悄改完就提交。
+
+此外要注意**预算控制**：设置最大步数、最大 token、最大时长，防止 Agent 陷入死循环烧钱。示例里的 `maxSteps = 8` 就是最朴素的一道保险。
+
+## 从零开始的建议路线
+
+如果你真想动手写一个，别一上来就想做「VS Code Killer」。推荐这条渐进路线：
+
+1. **第 1 周**：做一个能显示文本、支持光标和输入的编辑器（用现成的 Monaco 或 CodeMirror 起步也行）；
+2. **第 2 周**：实现自己的文档模型（Piece Table），把撤销/重做做对；
+3. **第 3 周**：接一个 tokenizer 做高亮，再接一个 LSP 服务器体验补全和诊断；
+4. **第 4 周**：加虚拟滚动、多光标、命令面板；
+5. **第 5 周**：接 AI 补全 API，做灰字提示；
+6. **第 6 周+**：实现 Agent 循环，把读文件、搜索、编辑、跑测试封装成工具。
+
+每一步都先跑通最小闭环，再打磨细节。编辑器是典型的「细节魔鬼」项目，完美主义会让你永远发布不了第一版。
+
+## 避坑清单
+
+把全文的坑集中列在这里，动手前对照看一遍：
+
+- [ ] **文本存储**：别用大字符串反复 `slice + concat`，上 Piece Table 或 Rope；
+- [ ] **撤销**：存逆向操作而非全量快照；AI 改动也必须进同一个撤销栈；
+- [ ] **字符串索引**：按 Unicode 码点处理，别按字节切，中文/emoji 会被切断；
+- [ ] **性能**：解析、搜索、索引全部丢 Worker，主线程只做渲染；
+- [ ] **超长行**：一行 10 万字符会让渲染崩溃，需要单独的行内虚拟化策略；
+- [ ] **正则高亮顺序**：`keyword` 必须排在 `ident` 前面，字符串规则要处理转义；
+- [ ] **不完整代码**：用户随时在输入，语法树必须容错，不能一遇错就崩；
+- [ ] **LSP 竞态**：快速输入会发出多个请求，要处理乱序响应（丢弃过期结果）；
+- [ ] **IME 输入法**：组合输入期间别抢键盘事件，否则中文打不出来；
+- [ ] **插件隔离**：插件跑独立进程，加 CPU / 内存配额，防止拖垮主界面；
+- [ ] **配置并发**：多窗口写设置要加锁或合并，避免互相覆盖；
+- [ ] **AI 权限分级**：读可默认允许，写/删/执行命令必须确认；
+- [ ] **AI 可回滚**：所有改动以 diff 呈现、可一键拒绝，不悄悄提交；
+- [ ] **Agent 预算**：设最大步数 / token / 时长，防止死循环烧钱；
+- [ ] **上下文质量**：喂给模型的是最相关代码，不是整个仓库；
+- [ ] **原子保存**：先写临时文件再 rename，避免断电留下半截文件。
+
+## 结语
+
+写一个代码编辑器，表面是在写 UI，实质是在雕琢一座分层的大厦：**平台层管 I/O，文档层管文本，语言层管理解，视图层管呈现，扩展层管生态，AI 层管自动化**。每一层都有成熟的技术方案——Piece Table、LSP、Tree-sitter、虚拟滚动、ReAct——你不需要重复造轮子，但需要知道轮子装在哪、为什么这么装。
+
+理解了这六层，你再看 VS Code、Cursor、Zed 这些产品，就会透过界面看到背后的骨架：它们的不同，大多只是这六层里某一两层的取舍不同罢了。
