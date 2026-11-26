@@ -65,7 +65,9 @@ async function getAccessToken() {
 // --- Resolve a local image path (e.g. /images/x.png) to a file on disk ---
 function resolveLocal(src) {
   const rel = src.replace(/^\//, '');
-  for (const p of [join(ROOT, 'public', rel), join(ROOT, rel)]) {
+  // CI deploys dist/ (which contains a copy of public/) to the server but does
+  // not sync public/ itself, so dist/ must be searchable here too.
+  for (const p of [join(ROOT, 'public', rel), join(ROOT, 'dist', rel), join(ROOT, rel)]) {
     if (existsSync(p)) return p;
   }
   return null;
@@ -102,9 +104,12 @@ function prepareImage(src) {
 // --- Generic multipart upload to a WeChat endpoint ---
 async function wxUpload(url, buffer, filename) {
   const boundary = '----WK' + Math.random().toString(36).slice(2);
+  // On servers without sips/ImageMagick we fall back to raw bytes; label PNG
+  // uploads correctly instead of always claiming image/jpeg.
+  const mime = /\.png$/i.test(filename) ? 'image/png' : 'image/jpeg';
   const header = Buffer.from(
     `--${boundary}\r\nContent-Disposition: form-data; name="media"; filename="${filename}"\r\n` +
-    `Content-Type: image/jpeg\r\n\r\n`
+    `Content-Type: ${mime}\r\n\r\n`
   );
   const footer = Buffer.from(`\r\n--${boundary}--\r\n`);
   const body = Buffer.concat([header, buffer, footer]);
