@@ -348,6 +348,7 @@ async function main() {
   const token = await getAccessToken();
   console.log('Access token obtained.\n');
 
+  let failed = 0;
   for (const file of files) {
     const name = basename(file);
     console.log(`[${name}]`);
@@ -356,12 +357,13 @@ async function main() {
       const { title, description, cover, body } = parseMDX(file);
       console.log(`  Title: ${title}`);
 
-      let thumbMediaId = '';
-      if (cover) {
-        thumbMediaId = await uploadCover(token, cover);
-      } else {
-        console.warn('  Warning: No cover image, using empty thumb');
+      // WeChat draft/add requires a non-empty thumb_media_id for news articles.
+      // Previously an empty cover was passed through and the resulting 40007
+      // was swallowed by the per-article catch, leaving CI green with no draft.
+      if (!cover) {
+        throw new Error('缺少封面：请在 frontmatter 中填写 cover（微信草稿必须有封面图）');
       }
+      const thumbMediaId = await uploadCover(token, cover);
 
       // Upload every inline image and map its src -> WeChat-hosted URL
       const imgMap = {};
@@ -385,8 +387,15 @@ async function main() {
         saveLedger(ledger);
       }
     } catch (err) {
+      failed++;
       console.error(`  ✗ Failed: ${err.message}\n`);
     }
+  }
+
+  if (failed > 0) {
+    console.error(`${failed} article(s) failed to publish.`);
+    process.exitCode = 1;
+    return;
   }
 
   console.log('Done.');
