@@ -1,0 +1,198 @@
+---
+title: "Cloudflare security-audit-skill 实战：把 AI 编程助手变成多阶段安全审计员"
+description: "security-audit-skill 是 Cloudflare 开源的 coding-agent skill，通过六阶段（侦察、覆盖导向狩猎、候选验证、结构化输出、独立记录验证、目标无关报告）把 AI 编程助手变成安全审计员。本文从安装到输出结构，附可运行命令与避坑清单。"
+category: "tech"
+date: 2026-11-28
+tags: ["security-audit", "AI", "coding-agent", "cloudflare", "devsecops", "vulnerability-discovery"]
+cover: "https://images.unsplash.com/photo-1550751827-4bd374c3f58b?w=1200&h=630&fit=crop"
+draft: false
+---
+
+![安全审计](https://images.unsplash.com/photo-1550751827-4bd374c3f58b?w=800&h=400&fit=crop)
+
+## 引言：AI 能当安全审计员吗？
+
+代码审计一直是安全工程中最耗时的活儿之一：阅读代码、找攻击面、验证漏洞、写报告，一个中型项目轻松花掉好几天。人工审计还容易漏掉边界情况，而传统扫描器又多半是“规则匹配”，误报多、上下文差。
+
+Cloudflare 开源的 [security-audit-skill](https://github.com/cloudflare/security-audit-skill)（79k+ 星标）试图换一条路：它不是一个传统扫描器，而是一个 **coding-agent skill**。装到支持工具调用与并行子 Agent 的编程助手里（如 OpenCode、Claude Code、Cursor 等），用自然语言发起“审计这段代码”，AI 就会按六个阶段自动侦察、狩猎、验证，最后输出可机器读取的审计发现。
+
+本文从安装到六阶段流程，再到输出结构与避坑，手把手带你跑通一次完整的 AI 安全审计。
+
+## 一、快速安装：一条命令装 skill
+
+security-audit-skill 通过 [Skills CLI](https://skills.sh) 安装，无需手动克隆源码。
+
+```bash
+# 安装到当前项目（推荐，随项目走）
+npx skills add https://github.com/cloudflare/security-audit-skill \
+  --skill security-audit
+
+# 或者安装到用户级，所有项目都能用
+npx skills add https://github.com/cloudflare/security-audit-skill \
+  --skill security-audit \
+  --global
+
+# 查看帮助与非交互式选项
+npx skills --help
+```
+
+安装完成后，skill 文件会落到本地，包含 `SKILL.md`、`RECONNAISSANCE.md`、`HUNTING.md`、`ATTACK-CLASSES.md` 等提示词模板，以及 `validate-findings.cjs`、`validate-coverage-ledger.cjs` 两个零依赖验证脚本。
+
+### 前置要求
+
+在安装前，确认你的环境满足以下条件：
+
+1. **编程助手支持工具调用与并行子 Agent**（如 Claude Code、Codex、OpenCode、Cursor）。skill 需要调度多个独立 Agent 并行工作，不支持纯对话型模型。
+2. **Node.js 已安装**：用于运行 `validate-findings.cjs` 和 `validate-coverage-ledger.cjs` 验证器。
+3. **OS-enforced sandbox**：对受控目标（构建、测试、浏览器、模糊测试等）必须禁用外网、使用白名单环境、限制资源、只允许写入指定的临时路径。如果没有沙箱，工作流会把结论保留为 `needs_validation`，而不会执行目标代码。
+
+## 二、发起一次审计：三句话就能开始
+
+安装好 skill 后，在你要审计的代码库里，直接对编程助手说：
+
+```
+security audit this codebase
+```
+
+或更具体一点：
+
+```
+find security vulnerabilities in ./src
+```
+
+```
+do a security review, output to ~/audits/my-project
+```
+
+skill 会根据请求自动触发。直接审计或渗透测试请求会使用 **全量审计模式**；安全问答和聚焦漏洞工作使用 **指导模式**，除非你明确要求生成报告文件。
+
+全量审计模式下，未指定输出目录时默认写入 `~/security-audit-skill/<repo-name>/run-<N>`。skill 只会在你明确选择一个 Git 忽略的目录时，才向目标仓库写入文件。
+
+### 示例：审计一个 Express 项目
+
+假设你有一个 Node.js 项目，结构如下：
+
+```
+my-app/
+├── src/
+│   ├── routes/
+│   │   └── users.js
+│   ├── middleware/
+│   │   └── auth.js
+│   └── utils/
+│       └── logger.js
+├── package.json
+└── .gitignore
+```
+
+在项目根目录打开编程助手，输入：
+
+```
+security audit this codebase, output to ~/security-audit-skill/my-app/run-1
+```
+
+skill 会启动六阶段流程，每阶段产出不同的中间文件：
+
+| 阶段 | 产出文件 | 作用 |
+|------|---------|------|
+| 1. 侦察 | `architecture.md`、`coverage-ledger.json` | 绘制架构图、信任边界、输入面，记录确定性覆盖 |
+| 2. 覆盖导向狩猎 | 猎人检查记录、覆盖评论员记录 | 从账本单元分配独立猎人，记录检查项，找出覆盖缺口 |
+| 3. 候选验证 | 候选验证记录 | 每个唯一候选交给新验证者尝试推翻 |
+| 4. 结构化输出 | `findings.json` | 写入 `confirmed` / `needs_validation` / `rejected` 记录，按 `report-schema.json` 校验 |
+| 5. 独立记录验证 | 独立源主张验证记录 | 新 Agent 验证最终源主张，重大替换再经独立验证 |
+| 6. 目标无关报告 | `REPORT.md`、`FINDINGS-DETAIL.md`、`NEEDS-VALIDATION.md` | 从验证记录与覆盖账本派生最终报告 |
+
+审计结束后，你会在输出目录拿到一份可读报告 `REPORT.md`，以及机器可读的 `findings.json`，方便接入 CI/CD 或票据系统。
+
+## 三、输出结构长什么样：findings.json 实例
+
+skill 的核心产出是 `findings.json`，每条记录包含三个 verdict（裁决）：
+
+- **confirmed**：有完整源踪迹且有边界观测结果，已确认的漏洞。
+- **needs_validation**：有确切未解决事实，无严重级别，需要人工或进一步验证。
+- **rejected**：候选已被推翻，记录为误报。
+
+下面是一个简化的 `findings.json` 示例（审计那个 Express 用户路由后可能产出）：
+
+```json
+{
+  "schema": "report-schema.json",
+  "generated_at": "2026-11-28T10:15:00Z",
+  "target": "./src/routes/users.js",
+  "findings": [
+    {
+      "id": "F-001",
+      "verdict": "confirmed",
+      "title": "用户 ID 直接拼接进 SQL 查询，存在 SQL 注入",
+      "severity": "high",
+      "location": {
+        "file": "src/routes/users.js",
+        "line": 42,
+        "snippet": "db.query('SELECT * FROM users WHERE id = ' + req.params.id)"
+      },
+      "source_trace": "req.params.id 未经过参数化绑定，直接拼接进查询字符串",
+      "observed_result": "传入 id=1 OR 1=1 返回全部用户记录"
+    },
+    {
+      "id": "F-002",
+      "verdict": "needs_validation",
+      "title": "登录接口缺少速率限制，可能遭受暴力破解",
+      "location": {
+        "file": "src/routes/users.js",
+        "line": 15
+      },
+      "unresolved_fact": "是否在上游网关或 WAF 层已有全局速率限制",
+      "severity": null
+    },
+    {
+      "id": "F-003",
+      "verdict": "rejected",
+      "title": "日志模块可能泄露敏感信息",
+      "location": {
+        "file": "src/utils/logger.js",
+        "line": 8
+      },
+      "disproof": "logger 已在输出前脱敏密码与 token 字段，经独立验证无泄露"
+    }
+  ],
+  "summary": {
+    "confirmed": 1,
+    "needs_validation": 1,
+    "rejected": 1
+  }
+}
+```
+
+`confirmed` 记录可以直接交给开发修复；`needs_validation` 需要人工确认是否真存在；`rejected` 记录说明 skill 已排除的误报，避免重复调查。
+
+配套的 `report-schema.json` 定义了所有三个裁决的字段约束，`validate-findings.cjs` 在 Phase 4 和 Phase 5 再次运行，确保输出合规；`validate-coverage-ledger.cjs` 在 Phase 1 建立账本后及每次更新后运行，保证覆盖账本格式正确。
+
+## 四、设计原则：skill 不会“瞎报”
+
+security-audit-skill 的设计原则决定了它与普通 AI 审计的不同：
+
+1. **只确认建立的边界失效**。把源码扎实的阻塞性结论保留为 `needs_validation`，记录确切的未解决事实，不凭空给严重级别。
+2. **对抗性验证**。检查发现的 Agent 永远不是发现该漏洞的那个 Agent，避免自我吹嘘。
+3. **严重性要求影响**。严重性 = 可能性 × 影响，而非偏离检查清单。缺少某层防御本身不是漏洞，若另一层已阻断攻击，只记为加固建议。
+4. **多次运行提高覆盖**。测试显示，单次运行大约只发现了一半漏洞；多次运行针对覆盖缺口、重新验证变更源码、携带当前源码证据，而不把陈旧或未决工作当作已覆盖。
+
+## 五、避坑清单
+
+| 坑点 | 说明 | 解决办法 |
+|------|------|----------|
+| skill 不触发 | 请求关键词不匹配触发器 | 使用“security audit / find vulnerabilities / security review”这类明确关键词 |
+| 结论全是 needs_validation | 缺少 OS-enforced sandbox，skill 不敢执行目标代码 | 提供沙箱环境，或接受 needs_validation 后人工补验证 |
+| findings.json 校验不通过 | 手动编辑输出字段，破坏 schema | 不要手动改 findings.json，只通过 skill 生成；用 `validate-findings.cjs` 校验 |
+| 向目标仓库误写文件 | 输出目录未在 .gitignore 内，skill 拒绝写入 | 指定一个 Git 忽略的输出目录（如 `~/security-audit-skill/...`） |
+| 单次运行漏掉漏洞 | 单次覆盖有限，约只发现一半问题 | 针对同一仓库多次运行，skill 会基于之前账本与发现补齐缺口 |
+| 编程助手不支持并行子 Agent | skill 无法调度独立验证者 | 更换支持 tool use 与 parallel sub-agents 的 Agent（如 Claude Code、Codex） |
+
+## 六、总结
+
+Cloudflare security-audit-skill 把 AI 编程助手从“写代码助手”变成“安全审计员”，通过侦察 → 覆盖导向狩猎 → 候选验证 → 结构化输出 → 独立记录验证 → 目标无关报告六个阶段，产出可机器读取的 `findings.json` 与人类可读的 `REPORT.md`。它的核心优势在于对抗性验证与多次运行覆盖，不瞎报、不漏报、不自说自话。
+
+如果你已经在用 OpenCode、Claude Code 或 Cursor，花一分钟装上这个 skill，下次提交代码前让它跑一轮安全审计，可能就能在合并前把高危 SQL 注入或缺失速率限制的问题拦下来。
+
+- 源码仓库：https://github.com/cloudflare/security-audit-skill
+- Skills CLI：https://skills.sh
+- 联系：security-ai-research@cloudflare.com
